@@ -1,0 +1,9 @@
+{
+  "development": {
+    "username": "postgres",
+    "password": "kingsami",
+    "database": "tradu_db",
+    "host": "127.0.0.1",
+    "dialect": "postgres"
+  }
+}
