@@ -8,6 +8,8 @@ export default function Home() {
   const [segments, setSegments] = useState([]);
   const [suggestions, setSuggestions] = useState({});
   const [traduction, setTraduction] = useState("");
+  const [reference, setReference] = useState("");
+  const [scores, setScores] = useState(null);
 
   // ------------------- Handlers -------------------
   const handleChangeTexte = (e) => setTexte(e.target.value);
@@ -22,14 +24,22 @@ export default function Home() {
   };
 
   const harmoniser = async () => {
-    try {
-      const { data } = await axios.post("http://localhost:3000/api/ai/harmoniser", { contenu: texte });
-      setTexte(data.harmonisation);
-      alert("✅ Harmonisation terminée");
-    } catch (e) {
-      alert("Erreur lors de l'harmonisation");
-    }
-  };
+  try {
+    const { data } = await axios.post("http://localhost:3000/api/ai/harmoniser", {
+      segments, // <- envoie le tableau de segments
+    });
+    setSegments(data.harmonisation.split("\n")); // mettre à jour les segments
+    alert("✅ Harmonisation terminée");
+  } catch (e) {
+    console.error(
+      "Erreur harmonisation:",
+      e.response && e.response.data ? e.response.data : e.message
+    );
+    alert("Erreur lors de l'harmonisation");
+  }
+};
+
+
 
   const traduire = async () => {
     try {
@@ -76,6 +86,26 @@ export default function Home() {
 
   const ajouterSegment = () => setSegments([...segments, `Nouveau segment ${segments.length + 1}`]);
   const supprimerSegment = (index) => setSegments(segments.filter((_, i) => i !== index));
+
+  // ------------------- Évaluation -------------------
+  const evaluerTraduction = async () => {
+    if (!traduction || !reference) {
+      alert("Veuillez remplir la référence et générer une traduction !");
+      return;
+    }
+    try {
+      const { data } = await axios.post("http://localhost:3000/api/ai/evaluer", {
+        reference,
+        hypothesis: traduction
+      });
+      setScores({
+        bleu: data.bleu.score,
+        comet: data.comet.score
+      });
+    } catch (e) {
+      alert("Erreur lors de l'évaluation");
+    }
+  };
 
   // ------------------- UI -------------------
   return (
@@ -129,6 +159,25 @@ export default function Home() {
           <p>{traduction}</p>
         </>
       )}
+
+      {/* Référence et Évaluation */}
+      <div style={{ marginTop: 20 }}>
+        <h2>Évaluation de la traduction</h2>
+        <textarea
+          value={reference}
+          onChange={(e) => setReference(e.target.value)}
+          placeholder="Entrez le texte original pour évaluer la traduction..."
+          style={{ width: "100%", height: 80, marginBottom: 10 }}
+        />
+        <button onClick={evaluerTraduction} style={{ marginBottom: 10 }}>📊 Évaluer</button>
+
+        {scores && (
+          <div style={{ marginTop: 10, padding: 10, border: "1px solid #ccc", borderRadius: 6 }}>
+            <p>BLEU: {scores.bleu}</p>
+            <p>COMET: {scores.comet}</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

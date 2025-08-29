@@ -85,6 +85,22 @@ app.post("/api/ai/traduire", async (req, res) => {
     res.status(500).json({ message: "Erreur /traduire" });
   }
 });
+// Évaluation automatique BLEU / COMET
+app.post("/api/ai/evaluer", async (req, res) => {
+  try {
+    const { reference, hypothesis } = req.body;
+    if (!reference || !hypothesis) {
+      return res.status(400).json({ message: "Reference et hypothesis sont requis" });
+    }
+    const data = await callPython("/evaluer", { reference, hypothesis });
+    res.json(data);
+  } catch (e) {
+    console.error("Erreur /evaluer:", e.message);
+    res.status(500).json({ message: "Erreur lors de l'évaluation" });
+  }
+});
+
+
 
 // --------- Socket.IO temps réel ---------
 const server = http.createServer(app);

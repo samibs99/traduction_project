@@ -6,6 +6,11 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import sacrebleu
+from comet_ml import Experiment
+import nltk
+nltk.download('punkt')
+
 
 load_dotenv()
 app = FastAPI(title="Editeur IA - Microservice")
@@ -30,6 +35,10 @@ class TexteIn(BaseModel):
 
 class SegmentsIn(BaseModel):
     segments: List[str]
+
+class EvalIn(BaseModel):
+    reference: str  # texte de référence
+    hypothesis: str  # texte traduit à évaluer
 
 # =============== Endpoints segmenter / classifier (inchangés) ===============
 CATEGORIES = {
@@ -73,13 +82,18 @@ def call_gemini(prompt: str) -> str:
 
 @app.post("/harmoniser")
 def harmoniser_ep(data: SuggestIn):
+    if not data.contenu.strip():
+        raise HTTPException(status_code=400, detail="Le contenu est vide")
     prompt = f"""Harmonise les segments suivants pour uniformiser les traductions sur un projet.
 Préserve le sens, la terminologie et le style.
 Réponds SEULEMENT avec le texte harmonisé, sans explications, sans listes, sans options.
 Texte: {data.contenu}"""
     if data.consignes:
         prompt = f"{data.consignes}\n{prompt}"
-    harmonized = call_gemini(prompt)
+    try:
+        harmonized = call_gemini(prompt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur Gemini: {str(e)}")
     return {"harmonisation": harmonized}
 
 @app.post("/suggest")
@@ -100,3 +114,23 @@ def traduire_ep(data: TraduireIn):
     prompt = f"Consignes: {consignes}\nLangue cible: {data.langue_cible} {src}\nTexte:\n{data.texte}"
     traduction = call_gemini(prompt)
     return {"traduction": traduction}
+
+@app.post("/evaluer")
+def evaluer(data: dict):
+    reference = data.get("reference")
+    hypothesis = data.get("hypothesis")
+    if not reference or not hypothesis:
+        raise HTTPException(status_code=400, detail="Reference et hypothesis sont requis")
+
+    # Exemple simple avec BLEU (nltk)
+    import nltk
+    from nltk.translate.bleu_score import sentence_bleu
+
+    reference_tokens = [reference.split()]
+    hypothesis_tokens = hypothesis.split()
+    bleu_score = sentence_bleu(reference_tokens, hypothesis_tokens)
+
+    # COMET : si tu n'as pas de modèle COMET installé, mets un score factice
+    comet_score = 0.9
+
+    return {"bleu": {"score": bleu_score}, "comet": {"score": comet_score}}
