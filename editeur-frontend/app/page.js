@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useAuth } from "./AuthContext";
+import { useRouter } from "next/navigation";
 
 export default function Home() {
   const [texte, setTexte] = useState("");
@@ -17,6 +19,12 @@ export default function Home() {
     traduction: false,
     evaluation: false
   });
+const { token, ready } = useAuth();
+const router = useRouter();
+
+useEffect(() => {
+  if (ready && !token) router.push("/login");
+}, [ready, token, router]);
 
   // ------------------- Handlers -------------------
   const handleChangeTexte = (e) => setTexte(e.target.value);
