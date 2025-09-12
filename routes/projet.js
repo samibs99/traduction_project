@@ -1,9 +1,38 @@
+// routes/projet.js
 const express = require('express');
 const router = express.Router();
-const { Projet, Segment } = require('../models'); // 👈 Ajout de Segment
+const { Projet, Segment } = require('../models');
 const { verifierToken, verifierRole } = require('../middlewares/auth');
-const { classifierContexte } = require('../services/classifier'); // 👈 IA contextuelle
-const { segmenterTexte } = require('../services/segmenter'); // 👈 Ajout segmentation IA
+const { classifierContexte } = require('../services/classifier');
+const { segmenterTexte } = require('../services/segmenter');
+
+// 📊 Dashboard Chef – progression des projets
+router.get('/dashboard/chef', verifierToken, verifierRole('chef_projet'), async (req, res) => {
+  try {
+    const projets = await Projet.findAll({
+      include: [{ model: Segment }]
+    });
+
+    const result = projets.map(p => {
+      const total = p.Segments.length;
+      const finis = p.Segments.filter(s => s.statut === "termine").length;
+      const progression = total > 0 ? Math.round((finis / total) * 100) : 0;
+
+      return {
+        id: p.id,
+        titre: p.titre,
+        statut: p.statut,
+        progression,
+        totalSegments: total
+      };
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error("Erreur dashboard chef:", err);
+    res.status(500).json({ message: "Erreur serveur", error: err.message });
+  }
+});
 
 // ➕ Créer un projet (chef de projet uniquement)
 router.post('/', verifierToken, verifierRole('chef_projet'), async (req, res) => {
@@ -22,25 +51,30 @@ router.post('/', verifierToken, verifierRole('chef_projet'), async (req, res) =>
       createurId: req.user.id
     });
 
-    // 🔥 Segmentation automatique via Python
-    const segments = await segmenterTexte(description); // 👈 segmentation du texte
+    // 🔥 Segmentation automatique via IA Python
+    const segments = await segmenterTexte(description) || [];
 
-    // 💾 Enregistrement des segments dans la base
-await Promise.all(
-  segments.map(async (contenu) => {
-    const contexte = await classifierContexte(contenu); // 🔥 classification IA
-    return Segment.create({
-      contenuSource: contenu,
-      contexte, // 👈 nouveau champ
-      projetId: projet.id
+    // 💾 Enregistrement des segments
+    await Promise.all(
+      segments.map(async (contenu) => {
+        const contexte = await classifierContexte(contenu);
+        return Segment.create({
+          contenuSource: contenu,
+          contexte,
+          statut: 'en_attente', // ✅ cohérent avec ton modèle
+          projetId: projet.id
+        });
+      })
+    );
+
+    // Retourne projet avec ses segments
+    const projetComplet = await Projet.findByPk(projet.id, {
+      include: [{ model: Segment }]
     });
-  })
-);
-
 
     res.json({
-      message: "Projet et segments créés avec succès",
-      projet,
+      message: "Projet et segments créés avec succès ✅",
+      projet: projetComplet,
       nombreDeSegments: segments.length
     });
   } catch (err) {
@@ -49,20 +83,22 @@ await Promise.all(
   }
 });
 
-// 📄 Lister tous les projets (chef ou traducteur)
+// 📄 Lister tous les projets
 router.get('/', verifierToken, async (req, res) => {
   const projets = await Projet.findAll();
   res.json(projets);
 });
 
-// 📄 Lire un projet
+// 📄 Lire un projet (avec ses segments)
 router.get('/:id', verifierToken, async (req, res) => {
-  const projet = await Projet.findByPk(req.params.id);
+  const projet = await Projet.findByPk(req.params.id, {
+    include: [{ model: Segment }]
+  });
   if (!projet) return res.status(404).json({ message: "Introuvable" });
   res.json(projet);
 });
 
-// 📄 ✅ Lister tous les segments liés à un projet
+// 📄 Lister les segments d’un projet
 router.get('/:id/segments', verifierToken, async (req, res) => {
   try {
     const segments = await Segment.findAll({
@@ -76,7 +112,7 @@ router.get('/:id/segments', verifierToken, async (req, res) => {
   }
 });
 
-// 📝 Modifier un projet (chef de projet uniquement)
+// 📝 Modifier un projet
 router.put('/:id', verifierToken, verifierRole('chef_projet'), async (req, res) => {
   const projet = await Projet.findByPk(req.params.id);
   if (!projet) return res.status(404).json({ message: "Introuvable" });
@@ -91,7 +127,7 @@ router.delete('/:id', verifierToken, verifierRole('chef_projet'), async (req, re
   if (!projet) return res.status(404).json({ message: "Introuvable" });
 
   await projet.destroy();
-  res.json({ message: "Supprimé" });
+  res.json({ message: "Supprimé ✅" });
 });
 
 module.exports = router;

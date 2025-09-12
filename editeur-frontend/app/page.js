@@ -12,7 +12,7 @@ export default function Home() {
   const [traduction, setTraduction] = useState("");
   const [reference, setReference] = useState("");
   const [scores, setScores] = useState(null);
-  const [activeTab, setActiveTab] = useState("éditeur");
+  const [activeTab, setActiveTab] = useState("éditeur");  
   const [loading, setLoading] = useState({
     segmenter: false,
     harmoniser: false,

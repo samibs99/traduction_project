@@ -1,25 +1,26 @@
 const jwt = require("jsonwebtoken");
 
-const secret = "votre_clé_secrète"; // ⚠️ à sécuriser
+// Vérifie si le token JWT est valide
+function verifierToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) return res.status(401).json({ message: "Token manquant" });
 
-const verifierToken = (req, res, next) => {
-  const token = req.headers["authorization"];
-  if (!token) return res.status(403).json({ message: "Token requis" });
-
-  try {
-    const decoded = jwt.verify(token.split(' ')[1], secret);
-    req.user = decoded;
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ message: "Token invalide" });
+    req.user = user; // { id, email, role }
     next();
-  } catch (err) {
-    res.status(401).json({ message: "Token invalide" });
-  }
-};
+  });
+}
 
-const verifierRole = (role) => {
+// Vérifie si l'utilisateur a le rôle requis
+function verifierRole(role) {
   return (req, res, next) => {
-    if (req.user.role !== role) return res.status(403).json({ message: "Accès refusé" });
+    if (req.user.role !== role) {
+      return res.status(403).json({ message: "Accès interdit : rôle requis " + role });
+    }
     next();
   };
-};
+}
 
 module.exports = { verifierToken, verifierRole };

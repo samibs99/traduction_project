@@ -5,13 +5,9 @@ module.exports = (sequelize, DataTypes) => {
     password: { type: DataTypes.STRING, allowNull: false },
     role: {
       type: DataTypes.ENUM('chef_projet', 'traducteur'),
-      defaultValue: 'traducteur'
+      allowNull: false,
+      defaultValue: 'traducteur' // par défaut traducteur
     }
   });
-
-  Utilisateur.associate = (models) => {
-    Utilisateur.hasMany(models.Projet, { foreignKey: 'createurId' });
-  };
-
   return Utilisateur;
 };

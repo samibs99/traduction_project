@@ -38,10 +38,10 @@ export default function LoginPage() {
       return;
     }
 
-    try {
+      try {
       await login(form.email, form.password);
-      alert("Connecté avec succès ✅");
-      window.location.href = "/dashboard";
+      // ✅ pas besoin de forcer la redirection ici
+      // AuthContext.js s’occupe de rediriger selon le rôle
     } catch (err) {
       setErrors({ submit: err.message || "Erreur lors de la connexion" });
     } finally {

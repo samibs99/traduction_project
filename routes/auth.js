@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Utilisateur } = require('../models');
-const secret = "votre_clé_secrète";
+const secret = process.env.JWT_SECRET || "votre_clé_secrète";
 
 // REGISTER
 router.post('/register', async (req, res) => {
@@ -33,12 +33,24 @@ router.post('/register', async (req, res) => {
     return res.status(400).json({ message: "Les mots de passe ne correspondent pas" });
   }
 
+  // Vérification rôle (par défaut traducteur)
+  const rolesAutorises = ["chef_projet", "traducteur"];
+  const userRole = rolesAutorises.includes(role) ? role : "traducteur";
+
   try {
     const hash = await bcrypt.hash(password, 12);
-    const user = await Utilisateur.create({ nom, email, password: hash, role: role || "user" });
-    res.json({ message: "Utilisateur créé avec succès", user });
+
+    const user = await Utilisateur.create({ 
+      nom, 
+      email, 
+      password: hash, 
+      role: userRole 
+    });
+
+    res.json({ message: "Utilisateur créé avec succès ✅", user });
   } catch (err) {
-    res.status(400).json({ message: "Erreur lors de la création du compte", error: err });
+    console.error("Erreur création utilisateur :", err);
+    res.status(400).json({ message: "Erreur lors de la création du compte", error: err.message });
   }
 });
 
@@ -46,14 +58,27 @@ router.post('/register', async (req, res) => {
 // LOGIN
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
+
+  // Vérif utilisateur
   const user = await Utilisateur.findOne({ where: { email } });
   if (!user) return res.status(404).json({ message: "Utilisateur non trouvé" });
 
+  // Vérif mot de passe
   const match = await bcrypt.compare(password, user.password);
   if (!match) return res.status(401).json({ message: "Mot de passe incorrect" });
 
-  const token = jwt.sign({ id: user.id, role: user.role }, secret, { expiresIn: '1d' });
-  res.json({ token });
+  // JWT contient aussi le rôle
+  const token = jwt.sign(
+    { id: user.id, role: user.role }, 
+    secret, 
+    { expiresIn: '1d' }
+  );
+
+  res.json({ 
+    message: "Connexion réussie ✅", 
+    token, 
+    role: user.role // 👈 rôle renvoyé au front
+  });
 });
 
 module.exports = router;
