@@ -1,25 +1,36 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "../AuthContext";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, user, loading } = useAuth();
+  const router = useRouter();
   const [form, setForm] = useState({ 
     email: "", 
-    password: "" 
+    motDePasse: "" 
   });
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Redirection si déjà connecté
+  useEffect(() => {
+    if (!loading && user) {
+      if (user.role === "chef_projet") {
+        router.push("/dashboard-chef");
+      } else if (user.role === "traducteur") {
+        router.push("/dashboard-traducteur");
+      }
+    }
+  }, [user, loading, router]);
+
   const validateForm = () => {
     const newErrors = {};
 
-    // Champs requis
     if (!form.email) newErrors.email = "L'email est requis";
-    if (!form.password) newErrors.password = "Le mot de passe est requis";
+    if (!form.motDePasse) newErrors.motDePasse = "Le mot de passe est requis";
 
-    // Validation email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (form.email && !emailRegex.test(form.email)) {
       newErrors.email = "Email invalide";
@@ -38,12 +49,11 @@ export default function LoginPage() {
       return;
     }
 
-      try {
-      await login(form.email, form.password);
-      // ✅ pas besoin de forcer la redirection ici
-      // AuthContext.js s’occupe de rediriger selon le rôle
-    } catch (err) {
-      setErrors({ submit: err.message || "Erreur lors de la connexion" });
+    try {
+      await login(form.email, form.motDePasse);
+    } catch (error) {
+      console.error(error);
+      setErrors({ submit: error.message || "Erreur lors de la connexion" });
     } finally {
       setIsSubmitting(false);
     }
@@ -53,11 +63,18 @@ export default function LoginPage() {
     const { name, value } = e.target;
     setForm({ ...form, [name]: value });
     
-    // Clear error when user starts typing
     if (errors[name]) {
       setErrors({ ...errors, [name]: "" });
     }
   };
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        Chargement...
+      </div>
+    );
+  }
 
   return (
     <div className="login-container">
@@ -83,17 +100,17 @@ export default function LoginPage() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="password">Mot de passe</label>
+            <label htmlFor="motDePasse">Mot de passe</label>
             <input
-              id="password"
-              name="password"
+              id="motDePasse"
+              name="motDePasse"
               type="password"
               placeholder="Votre mot de passe"
-              value={form.password}
+              value={form.motDePasse}
               onChange={handleInputChange}
-              className={errors.password ? "error" : ""}
+              className={errors.motDePasse ? "error" : ""}
             />
-            {errors.password && <span className="error-message">{errors.password}</span>}
+            {errors.motDePasse && <span className="error-message">{errors.motDePasse}</span>}
           </div>
 
           {errors.submit && <div className="error-message submit-error">{errors.submit}</div>}
@@ -267,6 +284,7 @@ export default function LoginPage() {
         .login-footer p {
           color: #666;
           margin: 0;
+          font-size: 16px;
         }
         
         .register-link {

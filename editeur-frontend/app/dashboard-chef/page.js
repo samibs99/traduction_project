@@ -146,26 +146,6 @@ export default function DashboardChef() {
     alert("✅ Segments enregistrés avec succès !");
   };
 
-  // Lancer l'harmonisation par IA (simulée)
-  const lancerHarmonisationIA = () => {
-    if (!projetSelectionne) return alert("⚠️ Veuillez d'abord sélectionner un projet !");
-    
-    // Simulation de l'harmonisation IA
-    const segmentsHarmonises = segments.map(segment => {
-      if (segment.statut === "terminé" && segment.contenuTraduit) {
-        // Simuler une amélioration de la traduction
-        return {
-          ...segment,
-          contenuTraduit: segment.contenuTraduit + " [harmonisé]"
-        };
-      }
-      return segment;
-    });
-    
-    setSegments(segmentsHarmonises);
-    alert("✅ Harmonisation IA terminée ! Les traductions ont été améliorées.");
-  };
-
   // Marquer un segment comme terminé
   const marquerCommeTermine = (index) => {
     const copy = [...segments];
@@ -281,9 +261,7 @@ export default function DashboardChef() {
                 <button onClick={enregistrerSegments} className="btn save">
                   💾 Enregistrer les segments
                 </button>
-                <button onClick={lancerHarmonisationIA} className="btn ia">
-                  🤖 Harmoniser avec IA
-                </button>
+               
               </div>
             </div>
 

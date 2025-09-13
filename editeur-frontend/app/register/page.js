@@ -1,25 +1,38 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "../AuthContext";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 export default function RegisterPage() {
-  const { register } = useAuth();
+  const { register, user, loading } = useAuth();
+  const router = useRouter();
   const [form, setForm] = useState({ 
     nom: "", 
     email: "", 
     motDePasse: "", 
     confirmMotDePasse: "",
-    role: "traducteur"  // 👈 rôle par défaut
+    role: "traducteur"
   });
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Redirection si déjà connecté
+  useEffect(() => {
+    if (!loading && user) {
+      if (user.role === "chef_projet") {
+        router.push("/dashboard-chef");
+      } else if (user.role === "traducteur") {
+        router.push("/dashboard-traducteur");
+      }
+    }
+  }, [user, loading, router]);
+
   const validateForm = () => {
     const newErrors = {};
 
-    if (!form.nom) newErrors.nom = "Le nom est requis";
-    if (!form.email) newErrors.email = "L'email est requis";
+    if (!form.nom.trim()) newErrors.nom = "Le nom est requis";
+    if (!form.email.trim()) newErrors.email = "L'email est requis";
     if (!form.motDePasse) newErrors.motDePasse = "Le mot de passe est requis";
     if (!form.confirmMotDePasse) newErrors.confirmMotDePasse = "La confirmation est requise";
 
@@ -41,9 +54,10 @@ export default function RegisterPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const submit = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setErrors({}); // Réinitialiser les erreurs
 
     if (!validateForm()) {
       setIsSubmitting(false);
@@ -51,12 +65,18 @@ export default function RegisterPage() {
     }
 
     try {
-await register(form.nom, form.email, form.motDePasse, form.confirmMotDePasse, "traducteur");
+      console.log("Tentative d'inscription avec:", form);
+      await register(form.nom, form.email, form.motDePasse, form.confirmMotDePasse, form.role);
       alert("Compte créé avec succès ✅");
-      window.location.href = "/login";
-    } catch (e) {
-      console.error(e);
-      alert("Erreur lors de l'inscription: " + (e.response?.data?.message || e.message));
+      router.push("/login");
+    } catch (error) {
+      console.error("Erreur d'inscription:", error);
+      // Vérifier si l'erreur contient un message spécifique
+      if (error.message.includes("Tous les champs sont requis")) {
+        setErrors({ submit: "Veuillez remplir tous les champs correctement" });
+      } else {
+        setErrors({ submit: error.message || "Erreur lors de l'inscription" });
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -68,6 +88,14 @@ await register(form.nom, form.email, form.motDePasse, form.confirmMotDePasse, "t
     if (errors[name]) setErrors({ ...errors, [name]: "" });
   };
 
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        Chargement...
+      </div>
+    );
+  }
+
   return (
     <div className="register-container">
       <div className="register-card">
@@ -76,7 +104,7 @@ await register(form.nom, form.email, form.motDePasse, form.confirmMotDePasse, "t
           <p>Rejoignez-nous et commencez votre expérience</p>
         </div>
 
-        <form onSubmit={submit} className="register-form">
+        <form onSubmit={handleSubmit} className="register-form">
           {/* Nom */}
           <div className="form-group">
             <label htmlFor="nom">Nom complet</label>
@@ -152,7 +180,8 @@ await register(form.nom, form.email, form.motDePasse, form.confirmMotDePasse, "t
             </select>
           </div>
 
-          {/* Bouton */}
+          {errors.submit && <div className="error-message submit-error">{errors.submit}</div>}
+
           <button 
             type="submit" 
             className="submit-button"
@@ -171,7 +200,6 @@ await register(form.nom, form.email, form.motDePasse, form.confirmMotDePasse, "t
       </div>
 
       <style jsx>{`
-        /* 👇 garde le même design que ton code précédent */
         .register-container {
           min-height: 100vh;
           display: flex;
@@ -221,6 +249,14 @@ await register(form.nom, form.email, form.motDePasse, form.confirmMotDePasse, "t
           color: #e74c3c;
           font-size: 14px;
           margin-top: 5px;
+        }
+        .submit-error {
+          text-align: center;
+          padding: 10px;
+          background-color: #ffebee;
+          border-radius: 6px;
+          border-left: 4px solid #e74c3c;
+          margin-bottom: 15px;
         }
         .submit-button {
           width: 100%;
