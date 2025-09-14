@@ -65,12 +65,11 @@ export default function RegisterPage() {
     }
 
     try {
-      console.log("Tentative d'inscription avec:", form);
       await register(form.nom, form.email, form.motDePasse, form.confirmMotDePasse, form.role);
       alert("Compte créé avec succès ✅");
       router.push("/login");
     } catch (error) {
-      console.error("Erreur d'inscription:", error);
+      console.error(error);
       // Vérifier si l'erreur contient un message spécifique
       if (error.message.includes("Tous les champs sont requis")) {
         setErrors({ submit: "Veuillez remplir tous les champs correctement" });

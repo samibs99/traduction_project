@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import { useAuth } from "../AuthContext"; // Import du contexte d'authentification
 
 export default function DashboardChef() {
   const [texte, setTexte] = useState("");
@@ -13,6 +14,8 @@ export default function DashboardChef() {
     { id: 2, nom: "Jean Martin" },
     { id: 3, nom: "Sophie Lambert" }
   ]);
+  
+  const { logout } = useAuth(); // Récupération de la fonction de déconnexion
 
   // Charger les projets depuis le localStorage au montage
   useEffect(() => {
@@ -167,8 +170,15 @@ export default function DashboardChef() {
   return (
     <div className="app-container">
       <header className="app-header">
-        <h1>📊 Dashboard Chef de Projet</h1>
-        <p>Créez et gérez vos projets de traduction</p>
+        <div className="header-content">
+          <div>
+            <h1>📊 Dashboard Chef de Projet</h1>
+            <p>Créez et gérez vos projets de traduction</p>
+          </div>
+          <button onClick={logout} className="logout-button">
+            🚪 Déconnexion
+          </button>
+        </div>
       </header>
 
       <main className="content">
@@ -345,8 +355,12 @@ export default function DashboardChef() {
           padding: 25px;
           border-radius: 12px;
           margin-bottom: 25px;
-          text-align: center;
           box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .header-content {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
         }
         .app-header h1 {
           margin: 0;
@@ -355,6 +369,20 @@ export default function DashboardChef() {
         .app-header p {
           margin: 10px 0 0;
           opacity: 0.9;
+        }
+        .logout-button {
+          background: rgba(255, 255, 255, 0.2);
+          border: 2px solid white;
+          border-radius: 8px;
+          color: white;
+          padding: 10px 15px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.3s ease;
+        }
+        .logout-button:hover {
+          background: rgba(255, 255, 255, 0.3);
+          transform: translateY(-2px);
         }
         .section {
           margin-top: 25px;
@@ -564,7 +592,7 @@ export default function DashboardChef() {
         .stat-card p {
           margin: 8px 0;
           font-size: 16px;
-          color: #555;
+          color: 555;
         }
         .progress-bar {
           height: 24px;

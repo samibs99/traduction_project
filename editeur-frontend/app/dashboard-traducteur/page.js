@@ -1,12 +1,14 @@
 "use client";
 import { useState, useEffect } from "react";
 import ProtectedRoute from "../../component/ProtectedRoute";
+import { useAuth } from "../AuthContext"; // Import du contexte d'authentification
 
 export default function DashboardTraducteur() {
   const [segmentsAssignes, setSegmentsAssignes] = useState([]);
   const [progression, setProgression] = useState({ traduits: 0, total: 0 });
   const [scoreMoyen, setScoreMoyen] = useState(0);
   const [traducteurId] = useState(1); // ID simulé du traducteur (Marie Dupont)
+  const { logout } = useAuth(); // Récupération de la fonction de déconnexion
 
   // Charger les segments assignés au traducteur
   useEffect(() => {
@@ -108,7 +110,12 @@ export default function DashboardTraducteur() {
     <ProtectedRoute allowedRoles={["traducteur"]}>
       <div className="app-container">
         <header className="app-header">
-          <h1>📝 Dashboard Traducteur</h1>
+          <div className="header-content">
+            <h1>📝 Dashboard Traducteur</h1>
+            <button onClick={logout} className="logout-button">
+              🚪 Déconnexion
+            </button>
+          </div>
         </header>
 
         <main className="content">
@@ -219,12 +226,30 @@ export default function DashboardTraducteur() {
             padding: 25px;
             border-radius: 12px;
             margin-bottom: 25px;
-            text-align: center;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+          }
+          .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
           }
           .app-header h1 {
             margin: 0;
             font-size: 2.2rem;
+          }
+          .logout-button {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid white;
+            border-radius: 8px;
+            color: white;
+            padding: 10px 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+          }
+          .logout-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
           }
           .section {
             margin-top: 25px;
@@ -251,10 +276,6 @@ export default function DashboardTraducteur() {
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.08);
             text-align: center;
-            transition: transform 0.2s;
-          }
-          .stat-card:hover {
-            transform: translateY(-5px);
           }
           .stat-card h3 {
             margin-top: 0;
@@ -270,11 +291,13 @@ export default function DashboardTraducteur() {
             font-size: 2rem;
             font-weight: bold;
             color: #27ae60;
+            margin: 0;
           }
           .stat-card .pending {
             font-size: 2rem;
             font-weight: bold;
             color: #e67e22;
+            margin: 0;
           }
           .progress-bar {
             height: 24px;
@@ -312,9 +335,6 @@ export default function DashboardTraducteur() {
           .filter-btn:hover {
             background: #f0f2f5;
           }
-          .filter-btn:active {
-            background: #e1e4e8;
-          }
           .segment-card {
             padding: 20px;
             background: white;
@@ -322,10 +342,6 @@ export default function DashboardTraducteur() {
             border: 1px solid #e1e4e8;
             margin-bottom: 20px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-            transition: box-shadow 0.2s;
-          }
-          .segment-card:hover {
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
           }
           .segment-header {
             display: flex;
@@ -365,6 +381,7 @@ export default function DashboardTraducteur() {
             margin-bottom: 8px;
             font-weight: bold;
             color: #2c3e50;
+            font-size: 14px;
           }
           .original-text {
             padding: 12px;
@@ -372,6 +389,8 @@ export default function DashboardTraducteur() {
             border-radius: 6px;
             border-left: 4px solid #3498db;
             margin: 0;
+            font-size: 15px;
+            line-height: 1.5;
           }
           .translation-input {
             width: 100%;
@@ -381,6 +400,7 @@ export default function DashboardTraducteur() {
             border-radius: 6px;
             font-size: 15px;
             resize: vertical;
+            font-family: inherit;
           }
           .translation-input:focus {
             outline: none;
