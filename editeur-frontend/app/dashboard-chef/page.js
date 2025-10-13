@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useAuth } from "../AuthContext"; // Import du contexte d'authentification
+import ProtectedRoute from "../../component/ProtectedRoute";
 
 export default function DashboardChef() {
   const [texte, setTexte] = useState("");
@@ -168,6 +169,8 @@ export default function DashboardChef() {
   };
 
   return (
+        <ProtectedRoute allowedRoles={["chef_projet"]}>
+    
     <div className="app-container">
       <header className="app-header">
         <div className="header-content">
@@ -625,5 +628,7 @@ export default function DashboardChef() {
         }
       `}</style>
     </div>
+        </ProtectedRoute>
+    
   );
 }
