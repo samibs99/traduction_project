@@ -1,19 +1,34 @@
+// Modèle Segment
 module.exports = (sequelize, DataTypes) => {
   const Segment = sequelize.define('Segment', {
-    contenuSource: { type: DataTypes.TEXT, allowNull: false },
-    contenuTraduit: DataTypes.TEXT,
-    statut: {
-      type: DataTypes.ENUM('en_attente', 'en_cours', 'termine'),
-      defaultValue: 'en_attente'
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true
     },
-    contexte: {
-      type: DataTypes.ENUM('general', 'juridique', 'technique', 'marketing'),
-      defaultValue: 'general'
+    projetId: {
+      type: DataTypes.INTEGER,
+      allowNull: false
+    },
+    text: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    classementnum: {
+      type: DataTypes.INTEGER,
+      allowNull: false
+    },
+    terminé: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
     }
   });
 
   Segment.associate = (models) => {
-    Segment.belongsTo(models.Projet, { foreignKey: 'projetId' });
+    Segment.belongsTo(models.Projet, {
+      foreignKey: 'projetId',
+      onDelete: 'CASCADE'
+    });
   };
 
   return Segment;

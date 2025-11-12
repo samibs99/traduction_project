@@ -1,634 +1,529 @@
 "use client";
 import { useState, useEffect } from "react";
-import { useAuth } from "../AuthContext"; // Import du contexte d'authentification
+import { useAuth } from "../AuthContext";
 import ProtectedRoute from "../../component/ProtectedRoute";
 
 export default function DashboardChef() {
-  const [texte, setTexte] = useState("");
-  const [segments, setSegments] = useState([]);
-  const [projets, setProjets] = useState([]);
-  const [projetSelectionne, setProjetSelectionne] = useState(null);
+  const { token, logout } = useAuth();
   const [nomProjet, setNomProjet] = useState("");
-  const [statistiques, setStatistiques] = useState(null);
-  const [traducteurs, setTraducteurs] = useState([
-    { id: 1, nom: "Marie Dupont" },
-    { id: 2, nom: "Jean Martin" },
-    { id: 3, nom: "Sophie Lambert" }
-  ]);
-  
-  const { logout } = useAuth(); // Récupération de la fonction de déconnexion
+  const [texte, setTexte] = useState("");
+  const [projets, setProjets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
 
-  // Charger les projets depuis le localStorage au montage
-  useEffect(() => {
-    const savedProjets = localStorage.getItem("projets");
-    if (savedProjets) {
-      const parsedProjets = JSON.parse(savedProjets);
-      setProjets(parsedProjets);
-    }
-  }, []);
+  const API_BASE = "http://localhost:3000/api";
 
-  // Mettre à jour les statistiques quand les segments changent
-  useEffect(() => {
-    if (projetSelectionne && segments.length > 0) {
-      calculerStatistiques();
-    }
-  }, [segments, projetSelectionne]);
-
-  const calculerStatistiques = () => {
-    const totalSegments = segments.length;
-    const segmentsTraduits = segments.filter(s => s.statut === "terminé").length;
-    const segmentsATraduire = totalSegments - segmentsTraduits;
-    const pourcentageTraduits = totalSegments > 0 ? Math.round((segmentsTraduits / totalSegments) * 100) : 0;
-    
-    // Calculer un score moyen factice basé sur la longueur des traductions
-    let scoreMoyen = 0;
-    if (segmentsTraduits > 0) {
-      const segmentsTermines = segments.filter(s => s.statut === "terminé");
-      scoreMoyen = segmentsTermines.reduce((sum, seg) => {
-        return sum + (seg.contenuTraduit ? Math.min(10, seg.contenuTraduit.length / 5) : 0);
-      }, 0) / segmentsTermines.length;
-    }
-
-    setStatistiques({
-      pourcentageTraduits,
-      totalSegments,
-      segmentsTraduits,
-      segmentsATraduire,
-      scoreMoyen: parseFloat(scoreMoyen.toFixed(2))
-    });
+  const parseResponse = async (res) => {
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) return { ok: res.ok, status: res.status, data: await res.json() };
+    return { ok: res.ok, status: res.status, text: await res.text() };
   };
 
-  const handleChangeTexte = (e) => setTexte(e.target.value);
-
-  // Segmentation simple locale
-  const segmenter = () => {
-    if (!texte.trim()) return alert("⚠️ Texte vide !");
-    const segs = texte
-      .split(/[.!?]/)
-      .map((s, index) => ({ 
-        id: Date.now() + index, 
-        contenu: s.trim(), 
-        contenuTraduit: "", 
-        statut: "à traduire",
-        traducteurId: null
-      }))
-      .filter(seg => seg.contenu);
-    setSegments(segs);
-  };
-
-  // Ajouter un segment vide
-  const ajouterSegment = () => {
-    const newSegment = {
-      id: Date.now(),
-      contenu: "",
-      contenuTraduit: "",
-      statut: "à traduire",
-      traducteurId: null
-    };
-    setSegments([...segments, newSegment]);
-  };
-
-  // Supprimer un segment
-  const supprimerSegment = (index) => {
-    setSegments(segments.filter((_, i) => i !== index));
-  };
-
-  // Modifier le contenu d'un segment
-  const handleChangeSegment = (index, value) => {
-    const copy = [...segments];
-    copy[index].contenu = value;
-    setSegments(copy);
-  };
-
-  // Assigner un traducteur à un segment
-  const assignerTraducteurSegment = (segmentIndex, traducteurId) => {
-    const copy = [...segments];
-    copy[segmentIndex].traducteurId = traducteurId;
-    setSegments(copy);
-  };
-
-  // Créer un nouveau projet
-  const creerProjet = () => {
-    if (!nomProjet.trim()) return alert("⚠️ Nom du projet requis !");
-    
-    const nouveauProjet = {
-      id: Date.now(),
-      nom: nomProjet,
-      statut: "en cours",
-      dateCreation: new Date().toISOString()
-    };
-    
-    setProjetSelectionne(nouveauProjet);
-    setProjets([...projets, nouveauProjet]);
-    setNomProjet("");
-    
-    // Sauvegarder dans le localStorage
-    localStorage.setItem("projets", JSON.stringify([...projets, nouveauProjet]));
-    
-    alert("✅ Projet créé avec succès !");
-  };
-
-  // Sélectionner un projet existant
-  const selectionnerProjet = (projet) => {
-    setProjetSelectionne(projet);
-    
-    // Charger les segments depuis le localStorage
-    const savedSegments = localStorage.getItem(`segments_${projet.id}`);
-    if (savedSegments) {
-      setSegments(JSON.parse(savedSegments));
-    } else {
-      setSegments([]);
+  const fetchProjets = async () => {
+    if (!token) return;
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/projets`, { headers: { Authorization: `Bearer ${token}` } });
+      const parsed = await parseResponse(res);
+      if (!parsed.ok) {
+        console.warn("fetchProjets error:", parsed);
+        if (parsed.status === 401 || parsed.status === 403) {
+          setMessage("Session expirée. Veuillez vous reconnecter.");
+          logout();
+          return;
+        }
+        setMessage(parsed.text || JSON.stringify(parsed.data) || "Erreur récupération projets");
+        return;
+      }
+      setProjets(parsed.data || []);
+    } catch (e) {
+      console.error(e);
+      setMessage("Erreur réseau lors de la récupération des projets");
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Enregistrer les segments dans le localStorage
-  const enregistrerSegments = () => {
-    if (!segments.length) return alert("⚠️ Aucun segment à enregistrer !");
-    if (!projetSelectionne) return alert("⚠️ Veuillez d'abord créer ou sélectionner un projet !");
-    
-    localStorage.setItem(`segments_${projetSelectionne.id}`, JSON.stringify(segments));
-    alert("✅ Segments enregistrés avec succès !");
-  };
+  useEffect(() => { fetchProjets(); }, [token]);
 
-  // Marquer un segment comme terminé
-  const marquerCommeTermine = (index) => {
-    const copy = [...segments];
-    if (copy[index].contenuTraduit.trim()) {
-      copy[index].statut = "terminé";
-      setSegments(copy);
-    } else {
-      alert("Veuillez d'abord ajouter une traduction");
-    }
-  };
-
-  // Modifier la traduction d'un segment
-  const modifierTraduction = (index, value) => {
-    const copy = [...segments];
-    copy[index].contenuTraduit = value;
-    setSegments(copy);
+  const creerProjet = async () => {
+    if (!nomProjet.trim()) return setMessage("Nom du projet requis.");
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/projets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ nomProjet, texte })
+      });
+      const parsed = await parseResponse(res);
+      if (!parsed.ok) {
+        if (parsed.status === 401 || parsed.status === 403) {
+          setMessage("Session expirée ou token invalide.");
+          logout();
+          return;
+        }
+        setMessage(parsed.text || JSON.stringify(parsed.data) || "Erreur création projet");
+        return;
+      }
+      const created = parsed.data;
+      setProjets(prev => [created, ...prev]);
+      setNomProjet(""); setTexte("");
+      setMessage("Projet créé avec succès.");
+    } catch (e) {
+      console.error(e);
+      setMessage("Erreur réseau lors de la création du projet");
+    } finally { setLoading(false); }
   };
 
   return (
-        <ProtectedRoute allowedRoles={["chef_projet"]}>
-    
-    <div className="app-container">
-      <header className="app-header">
-        <div className="header-content">
-          <div>
-            <h1>📊 Dashboard Chef de Projet</h1>
-            <p>Créez et gérez vos projets de traduction</p>
-          </div>
-          <button onClick={logout} className="logout-button">
-            🚪 Déconnexion
-          </button>
-        </div>
-      </header>
-
-      <main className="content">
-        {/* Section création de projet */}
-        <div className="section">
-          <h2>Créer un nouveau projet</h2>
-          <div className="form-group">
-            <input
-              type="text"
-              value={nomProjet}
-              onChange={(e) => setNomProjet(e.target.value)}
-              placeholder="Nom du projet"
-              className="text-input"
-            />
-            <button onClick={creerProjet} className="btn">
-              ➕ Créer le projet
+    <ProtectedRoute allowedRoles={["chef_projet"]}>
+      <div className="dashboard-container">
+        <header className="dashboard-header">
+          <div className="header-content">
+            <div className="header-title">
+              <h1>Dashboard Chef de Projet</h1>
+              <p>Gestion et création de projets</p>
+            </div>
+            <button className="logout-btn" onClick={logout}>
+              <span>Déconnexion</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16,17 21,12 16,7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+              </svg>
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* Liste des projets existants */}
-        {projets.length > 0 && (
-          <div className="section">
-            <h2>Projets existants</h2>
-            <div className="projets-list">
-              {projets.map(projet => (
-                <div 
-                  key={projet.id} 
-                  className={`projet-item ${projetSelectionne?.id === projet.id ? 'selected' : ''}`}
-                  onClick={() => selectionnerProjet(projet)}
+        <main className="dashboard-main">
+          <section className="creation-section">
+            <div className="section-header">
+              <h2>Créer un nouveau projet</h2>
+              <div className="section-divider"></div>
+            </div>
+            
+            <div className="form-container">
+              <div className="input-group">
+                <label htmlFor="nomProjet">Nom du projet *</label>
+                <input 
+                  id="nomProjet"
+                  type="text" 
+                  placeholder="Entrez le nom du projet..." 
+                  value={nomProjet} 
+                  onChange={e => setNomProjet(e.target.value)}
+                />
+              </div>
+              
+              <div className="input-group">
+                <label htmlFor="description">Description</label>
+                <textarea 
+                  id="description"
+                  placeholder="Décrivez brièvement le projet..." 
+                  value={texte} 
+                  onChange={e => setTexte(e.target.value)} 
+                  rows={5}
+                />
+              </div>
+              
+              <div className="form-actions">
+                <button 
+                  className="btn-primary" 
+                  onClick={creerProjet} 
+                  disabled={loading || !nomProjet.trim()}
                 >
-                  <span className="projet-nom">{projet.nom}</span>
-                  <span className="projet-statut">{projet.statut}</span>
-                  <span className="projet-date">
-                    {new Date(projet.dateCreation).toLocaleDateString()}
-                  </span>
+                  {loading ? (
+                    <>
+                      <div className="spinner"></div>
+                      Création en cours...
+                    </>
+                  ) : (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M12 5v14M5 12h14"/>
+                      </svg>
+                      Créer le projet
+                    </>
+                  )}
+                </button>
+                
+                <button 
+                  className="btn-secondary" 
+                  onClick={() => { setNomProjet(''); setTexte(''); setMessage(''); }}
+                  disabled={loading}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                  Réinitialiser
+                </button>
+              </div>
+              
+              {message && (
+                <div className={`message ${message.includes("succès") ? "message-success" : "message-error"}`}>
+                  {message}
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
+          </section>
 
-        {/* Statistiques du projet sélectionné */}
-        {projetSelectionne && statistiques && (
-          <div className="section">
-            <h2>Statistiques du projet: {projetSelectionne.nom}</h2>
-            <div className="stats-grid">
-              <div className="stat-card">
-                <h3>Progression</h3>
-                <div className="progress-bar">
-                  <div 
-                    className="progress-fill" 
-                    style={{width: `${statistiques.pourcentageTraduits}%`}}
-                  ></div>
+          <section className="projects-section">
+            <div className="section-header">
+              <h2>Projets existants</h2>
+              <span className="project-count">{projets.length} projet(s)</span>
+            </div>
+            
+            <div className="projects-container">
+              {loading ? (
+                <div className="loading-state">
+                  <div className="spinner"></div>
+                  <p>Chargement des projets...</p>
                 </div>
-                <p>{statistiques.pourcentageTraduits}% traduits</p>
-              </div>
-              <div className="stat-card">
-                <h3>Segments</h3>
-                <p>Total: {statistiques.totalSegments}</p>
-                <p>Traduits: {statistiques.segmentsTraduits}</p>
-                <p>À traduire: {statistiques.segmentsATraduire}</p>
-              </div>
-              <div className="stat-card">
-                <h3>Qualité moyenne</h3>
-                <p>{statistiques.scoreMoyen ? statistiques.scoreMoyen.toFixed(2) + '/10' : 'N/A'}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Zone texte et segmentation - seulement si projet sélectionné */}
-        {projetSelectionne && (
-          <>
-            <div className="section">
-              <h2>Texte global</h2>
-              <textarea
-                value={texte}
-                onChange={handleChangeTexte}
-                placeholder="Collez ici le texte du projet..."
-                className="main-textarea"
-              />
-              <div className="button-group">
-                <button onClick={segmenter} className="btn">
-                  📄 Segmenter
-                </button>
-                <button onClick={ajouterSegment} className="btn add">
-                  ➕ Ajouter segment
-                </button>
-                <button onClick={enregistrerSegments} className="btn save">
-                  💾 Enregistrer les segments
-                </button>
-               
-              </div>
-            </div>
-
-            {/* Segments */}
-            <div className="section">
-              <h2>Segments ({segments.length})</h2>
-              {segments.length === 0 ? (
-                <p className="no-segments">Aucun segment pour ce projet. Ajoutez-en ou segmentez un texte.</p>
+              ) : projets.length === 0 ? (
+                <div className="empty-state">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                  </svg>
+                  <h3>Aucun projet créé</h3>
+                  <p>Commencez par créer votre premier projet</p>
+                </div>
               ) : (
-                segments.map((seg, i) => (
-                  <div key={seg.id} className="segment-item">
-                    <span className="segment-label">Segment {i + 1}</span>
-                    <div className="segment-content">
-                      <div className="segment-original">
-                        <input
-                          type="text"
-                          value={seg.contenu}
-                          onChange={(e) => handleChangeSegment(i, e.target.value)}
-                          className="segment-input"
-                          placeholder="Contenu du segment"
-                        />
+                <div className="projects-grid">
+                  {projets.map((projet, idx) => (
+                    <div key={projet.id ?? projet.nomProjet ?? `projet-${idx}`} className="project-card">
+                      <div className="project-header">
+                        <h3 className="project-title">{projet.nomProjet || projet.titre || projet.nom}</h3>
                       </div>
-                      <div className="segment-translation">
-                        <input
-                          type="text"
-                          value={seg.contenuTraduit}
-                          onChange={(e) => modifierTraduction(i, e.target.value)}
-                          className="segment-input"
-                          placeholder="Traduction"
-                          disabled={seg.statut === "terminé"}
-                        />
-                        <button
-                          onClick={() => marquerCommeTermine(i)}
-                          className={`btn status ${seg.statut === "terminé" ? "completed" : "incomplete"}`}
-                        >
-                          {seg.statut === "terminé" ? "✓ Terminé" : "Marquer terminé"}
+                      <p className="project-description">
+                        {projet.texte 
+                          ? (projet.texte.length > 150 
+                              ? projet.texte.substring(0, 150) + '...' 
+                              : projet.texte)
+                          : 'Aucune description fournie'}
+                      </p>
+                      <div className="project-footer">
+                        <span className="project-date">Créé récemment</span>
+                        <button className="project-action">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                          </svg>
+                          Voir
                         </button>
                       </div>
                     </div>
-                    <select 
-                      value={seg.traducteurId || ""} 
-                      onChange={(e) => assignerTraducteurSegment(i, e.target.value)}
-                      className="traducteur-select"
-                    >
-                      <option value="">Assigner un traducteur</option>
-                      {traducteurs.map(trad => (
-                        <option key={trad.id} value={trad.id}>
-                          {trad.nom}
-                        </option>
-                      ))}
-                    </select>
-                    <span className={`statut-badge ${seg.statut.replace(" ", "")}`}>
-                      {seg.statut}
-                    </span>
-                    <button
-                      onClick={() => supprimerSegment(i)}
-                      className="btn delete"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
-          </>
-        )}
-      </main>
+          </section>
+        </main>
+      </div>
 
       <style jsx>{`
-        .app-container {
-          max-width: 1200px;
-          margin: auto;
-          padding: 20px;
-          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          background-color: #f5f7fa;
+        .dashboard-container {
           min-height: 100vh;
+          background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+          padding: 20px;
         }
-        .app-header {
-          background: linear-gradient(135deg, #2c3e50 0%, #4a6491 100%);
-          color: white;
-          padding: 25px;
+
+        .dashboard-header {
+          background: white;
           border-radius: 12px;
-          margin-bottom: 25px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          margin-bottom: 24px;
+          padding: 20px;
         }
+
         .header-content {
           display: flex;
           justify-content: space-between;
           align-items: center;
+          max-width: 1200px;
+          margin: 0 auto;
         }
-        .app-header h1 {
+
+        .header-title h1 {
           margin: 0;
-          font-size: 2.2rem;
+          color: #1a202c;
+          font-size: 28px;
+          font-weight: 700;
         }
-        .app-header p {
-          margin: 10px 0 0;
-          opacity: 0.9;
+
+        .header-title p {
+          margin: 4px 0 0 0;
+          color: #718096;
+          font-size: 14px;
         }
-        .logout-button {
-          background: rgba(255, 255, 255, 0.2);
-          border: 2px solid white;
-          border-radius: 8px;
-          color: white;
-          padding: 10px 15px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-        .logout-button:hover {
-          background: rgba(255, 255, 255, 0.3);
-          transform: translateY(-2px);
-        }
-        .section {
-          margin-top: 25px;
-          padding: 25px;
-          background: white;
-          border-radius: 12px;
-          border: 1px solid #e1e4e8;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        }
-        .section h2 {
-          margin-top: 0;
-          color: #2c3e50;
-          border-bottom: 2px solid #f0f2f5;
-          padding-bottom: 12px;
-        }
-        .form-group {
+
+        .logout-btn {
           display: flex;
-          gap: 15px;
           align-items: center;
-        }
-        .text-input, .main-textarea {
-          padding: 12px 15px;
-          border-radius: 8px;
-          border: 1px solid #d1d9e0;
-          flex: 1;
-          font-size: 16px;
-          transition: border-color 0.3s;
-        }
-        .text-input:focus, .main-textarea:focus {
-          outline: none;
-          border-color: #3498db;
-          box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2);
-        }
-        .main-textarea {
-          width: 100%;
-          min-height: 150px;
-          margin-bottom: 15px;
-          resize: vertical;
-        }
-        .btn {
-          padding: 12px 20px;
+          gap: 8px;
+          padding: 10px 16px;
+          background: #e53e3e;
+          color: white;
           border: none;
           border-radius: 8px;
+          font-weight: 600;
           cursor: pointer;
-          background: #3498db;
-          color: white;
-          font-weight: 500;
-          transition: all 0.2s;
-          font-size: 15px;
+          transition: all 0.2s ease;
         }
-        .btn:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+
+        .logout-btn:hover {
+          background: #c53030;
+          transform: translateY(-1px);
         }
-        .btn.add {
-          background: #27ae60;
+
+        .dashboard-main {
+          max-width: 1200px;
+          margin: 0 auto;
+          display: grid;
+          gap: 24px;
         }
-        .btn.delete {
-          background: #e74c3c;
-          padding: 10px 15px;
+
+        .creation-section, .projects-section {
+          background: white;
+          border-radius: 12px;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          padding: 24px;
         }
-        .btn.save {
-          background: #8e44ad;
+
+        .section-header {
+          margin-bottom: 24px;
         }
-        .btn.ia {
-          background: #f39c12;
+
+        .section-header h2 {
+          margin: 0 0 8px 0;
+          color: #2d3748;
+          font-size: 20px;
+          font-weight: 600;
         }
-        .btn.status {
-          padding: 8px 15px;
+
+        .section-divider {
+          height: 3px;
+          background: linear-gradient(90deg, #4299e1, #38b2ac);
+          border-radius: 2px;
+          width: 60px;
+        }
+
+        .project-count {
+          background: #edf2f7;
+          color: #4a5568;
+          padding: 4px 12px;
+          border-radius: 20px;
+          font-size: 12px;
+          font-weight: 600;
+        }
+
+        .form-container {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        .input-group label {
+          display: block;
+          margin-bottom: 6px;
+          color: #4a5568;
+          font-weight: 600;
           font-size: 14px;
-          white-space: nowrap;
         }
-        .btn.status.completed {
-          background: #27ae60;
+
+        .input-group input, .input-group textarea {
+          width: 100%;
+          padding: 12px 16px;
+          border: 2px solid #e2e8f0;
+          border-radius: 8px;
+          font-size: 14px;
+          transition: all 0.2s ease;
+          box-sizing: border-box;
         }
-        .btn.status.incomplete {
-          background: #e67e22;
+
+        .input-group input:focus, .input-group textarea:focus {
+          outline: none;
+          border-color: #4299e1;
+          box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
         }
-        .button-group {
+
+        .form-actions {
           display: flex;
           gap: 12px;
           flex-wrap: wrap;
         }
-        .segment-item {
+
+        .btn-primary, .btn-secondary {
           display: flex;
           align-items: center;
-          margin-top: 15px;
-          gap: 15px;
-          padding: 15px;
-          background: white;
+          gap: 8px;
+          padding: 12px 20px;
+          border: none;
           border-radius: 8px;
-          border: 1px solid #e1e4e8;
-          transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .segment-item:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-        .segment-label {
-          width: 90px;
-          font-weight: bold;
-          color: #7f8c8d;
-          flex-shrink: 0;
-        }
-        .segment-content {
-          display: flex;
-          flex-direction: column;
-          flex: 1;
-          gap: 10px;
-        }
-        .segment-original, .segment-translation {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-        }
-        .segment-input {
-          flex: 1;
-          padding: 10px 12px;
-          border: 1px solid #d1d9e0;
-          border-radius: 6px;
-          font-size: 15px;
-          transition: border-color 0.3s;
-        }
-        .segment-input:focus {
-          outline: none;
-          border-color: #3498db;
-        }
-        .segment-input:disabled {
-          background-color: #f8f9fa;
-          color: #6c757d;
-        }
-        .traducteur-select {
-          padding: 10px 12px;
-          border: 1px solid #d1d9e0;
-          border-radius: 6px;
-          width: 200px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
           font-size: 14px;
-          flex-shrink: 0;
         }
-        .statut-badge {
-          padding: 6px 12px;
-          border-radius: 20px;
-          font-size: 13px;
-          font-weight: bold;
-          text-transform: uppercase;
-          flex-shrink: 0;
+
+        .btn-primary {
+          background: #4299e1;
+          color: white;
         }
-        .statut-badge.àtraduire {
-          background: #ffeaa7;
-          color: #d35400;
+
+        .btn-primary:hover:not(:disabled) {
+          background: #3182ce;
+          transform: translateY(-1px);
         }
-        .statut-badge.terminé {
-          background: #d5f5e3;
-          color: #27ae60;
+
+        .btn-primary:disabled {
+          background: #a0aec0;
+          cursor: not-allowed;
+          transform: none;
         }
-        .projets-list {
+
+        .btn-secondary {
+          background: #edf2f7;
+          color: #4a5568;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+          background: #e2e8f0;
+        }
+
+        .message {
+          padding: 12px 16px;
+          border-radius: 8px;
+          font-weight: 600;
+          margin-top: 8px;
+        }
+
+        .message-success {
+          background: #c6f6d5;
+          color: #276749;
+          border: 1px solid #9ae6b4;
+        }
+
+        .message-error {
+          background: #fed7d7;
+          color: #c53030;
+          border: 1px solid #feb2b2;
+        }
+
+        .spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid transparent;
+          border-top: 2px solid currentColor;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        .projects-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+          gap: 20px;
+        }
+
+        .project-card {
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 20px;
+          transition: all 0.2s ease;
+        }
+
+        .project-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .project-header {
           display: flex;
-          flex-direction: column;
-          gap: 12px;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 12px;
         }
-        .projet-item {
+
+        .project-title {
+          margin: 0;
+          color: #2d3748;
+          font-size: 16px;
+          font-weight: 600;
+          line-height: 1.4;
+        }
+
+        .project-badge {
+          background: #c6f6d5;
+          color: #276749;
+          padding: 4px 8px;
+          border-radius: 12px;
+          font-size: 10px;
+          font-weight: 700;
+        }
+
+        .project-description {
+          color: #718096;
+          font-size: 14px;
+          line-height: 1.5;
+          margin: 0 0 16px 0;
+        }
+
+        .project-footer {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding: 15px;
-          border: 1px solid #e1e4e8;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: background 0.2s;
         }
-        .projet-item:hover {
-          background: #f8f9fa;
-        }
-        .projet-item.selected {
-          background: #e8f4fc;
-          border-color: #3498db;
-        }
-        .projet-statut {
-          padding: 5px 12px;
-          border-radius: 20px;
-          font-size: 13px;
-          background: #eee;
-          text-transform: uppercase;
-          font-weight: bold;
-        }
-        .projet-date {
-          font-size: 14px;
-          color: #7f8c8d;
-        }
-        .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 20px;
-        }
-        .stat-card {
-          padding: 20px;
-          background: white;
-          border-radius: 10px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-          text-align: center;
-        }
-        .stat-card h3 {
-          margin-top: 0;
-          color: #2c3e50;
-          font-size: 18px;
-        }
-        .stat-card p {
-          margin: 8px 0;
-          font-size: 16px;
-          color: 555;
-        }
-        .progress-bar {
-          height: 24px;
-          background: #ecf0f1;
-          border-radius: 12px;
-          overflow: hidden;
-          margin: 15px 0;
-          box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
-        }
-        .progress-fill {
-          height: 100%;
-          background: linear-gradient(90deg, #2ecc71 0%, #27ae60 100%);
-          transition: width 0.5s ease-out;
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-          padding-right: 10px;
-          color: white;
-          font-weight: bold;
+
+        .project-date {
+          color: #a0aec0;
           font-size: 12px;
         }
-        .no-segments {
+
+        .project-action {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          background: none;
+          border: none;
+          color: #4299e1;
+          font-size: 12px;
+          cursor: pointer;
+          font-weight: 600;
+        }
+
+        .loading-state, .empty-state {
           text-align: center;
-          padding: 30px;
-          color: #7f8c8d;
-          font-style: italic;
-          background: #f8f9fa;
-          border-radius: 8px;
-          border: 2px dashed #e1e4e8;
+          padding: 40px 20px;
+          color: #718096;
+        }
+
+        .empty-state h3 {
+          margin: 16px 0 8px 0;
+          color: #4a5568;
+        }
+
+        @media (max-width: 768px) {
+          .dashboard-container {
+            padding: 12px;
+          }
+          
+          .header-content {
+            flex-direction: column;
+            gap: 16px;
+            text-align: center;
+          }
+          
+          .form-actions {
+            flex-direction: column;
+          }
+          
+          .projects-grid {
+            grid-template-columns: 1fr;
+          }
         }
       `}</style>
-    </div>
-        </ProtectedRoute>
-    
+    </ProtectedRoute>
   );
 }

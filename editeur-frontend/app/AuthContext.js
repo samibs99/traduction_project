@@ -119,13 +119,19 @@ export const AuthProvider = ({ children }) => {
       }
 
       // Décoder token pour récupérer rôle + id
-      const decoded = JSON.parse(atob(data.token.split(".")[1]));
+      let decoded = {};
+      try {
+        decoded = JSON.parse(atob(data.token.split(".")[1]));
+      } catch (e) {
+        console.warn('Impossible de décoder le token côté client:', e.message);
+      }
 
+      // L'API renvoie le rôle séparément (data.role). On utilise data.role si présent.
       const userData = {
         email,
-        nom: decoded.nom,
-        role: decoded.role,
-        id: decoded.id,
+        nom: data.user?.nom || data.nom || decoded.nom || "",
+        role: data.role || decoded.role || "",
+        id: decoded.id || null,
       };
 
       setToken(data.token);

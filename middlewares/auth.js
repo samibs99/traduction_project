@@ -1,14 +1,17 @@
 const jwt = require("jsonwebtoken");
 
+// Utiliser la même clé par défaut que dans /routes/auth.js
+const SECRET = process.env.JWT_SECRET || "votre_clé_secrète";
+
 // Vérifie si le token JWT est valide
 function verifierToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
   if (!token) return res.status(401).json({ message: "Token manquant" });
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+  jwt.verify(token, SECRET, (err, user) => {
     if (err) return res.status(403).json({ message: "Token invalide" });
-    req.user = user; // { id, email, role }
+    req.user = user; // { id, role }
     next();
   });
 }

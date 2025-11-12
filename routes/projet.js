@@ -1,133 +1,106 @@
-// routes/projet.js
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { Projet, Segment } = require('../models');
-const { verifierToken, verifierRole } = require('../middlewares/auth');
-const { classifierContexte } = require('../services/classifier');
-const { segmenterTexte } = require('../services/segmenter');
 
-// 📊 Dashboard Chef – progression des projets
-router.get('/dashboard/chef', verifierToken, verifierRole('chef_projet'), async (req, res) => {
-  try {
-    const projets = await Projet.findAll({
-      include: [{ model: Segment }]
-    });
+const axios = require("axios");
+const db = require("../models"); // Assure-toi d’avoir index.js pour centraliser l’export des modèles
+const { Projet, Segment, sequelize } = db;
 
-    const result = projets.map(p => {
-      const total = p.Segments.length;
-      const finis = p.Segments.filter(s => s.statut === "termine").length;
-      const progression = total > 0 ? Math.round((finis / total) * 100) : 0;
-
-      return {
-        id: p.id,
-        titre: p.titre,
-        statut: p.statut,
-        progression,
-        totalSegments: total
-      };
-    });
-
-    res.json(result);
-  } catch (err) {
-    console.error("Erreur dashboard chef:", err);
-    res.status(500).json({ message: "Erreur serveur", error: err.message });
-  }
+// GET projets
+router.get("/", async (req, res) => {
+    const projets = await Projet.findAll({ order: [["createdAt", "DESC"]] });
+    res.json(projets);
 });
 
-// ➕ Créer un projet (chef de projet uniquement)
-router.post('/', verifierToken, verifierRole('chef_projet'), async (req, res) => {
-  try {
-    const { titre, description, dateDebut, dateFin, langueSourceId, langueCibleId } = req.body;
+// POST projet
+// POST création de projet + segmentation automatique
+router.post("/", async (req, res) => {
+    const { nomProjet, texte } = req.body;
+    if (!nomProjet) return res.status(400).json({ error: "Nom du projet requis." });
 
-    // Création du projet
-    const projet = await Projet.create({
-      titre,
-      description,
-      statut: 'ouvert',
-      dateDebut,
-      dateFin,
-      langueSourceId,
-      langueCibleId,
-      createurId: req.user.id
+    const t = await sequelize.transaction();
+    try {
+        // Crée d'abord le projet (pour obtenir un id)
+        const projet = await Projet.create({ nomProjet, texte }, { transaction: t });
+
+        // Si on a du texte, appeler le service de segmentation Python (FastAPI)
+        let segmentsArray = [];
+        if (texte && texte.trim()) {
+            const PY_URL = process.env.PY_URL || "http://127.0.0.1:8000";
+            const resp = await axios.post(`${PY_URL}/segmenter`, { texte });
+            // le microservice peut renvoyer directement un tableau ou { segments: [...] }
+            segmentsArray = Array.isArray(resp.data) ? resp.data : (resp.data.segments || resp.data.result || []);
+
+            // Insérer les segments numérotés
+            const toCreate = segmentsArray.map((contenu, idx) => ({
+                projetId: projet.id,
+                text: contenu,
+                classementnum: idx + 1
+            }));
+            if (toCreate.length > 0) {
+                await Segment.bulkCreate(toCreate, { transaction: t });
+            }
+
+            // Stocker aussi le tableau des segments dans la colonne JSON du projet
+            await projet.update({ segments: segmentsArray }, { transaction: t });
+        }
+
+        await t.commit();
+
+        // Recharger les segments insérés pour la réponse
+        const insertedSegments = await Segment.findAll({ where: { projetId: projet.id }, order: [["classementnum", "ASC"]] });
+        res.json({ projet, segments: insertedSegments });
+    } catch (e) {
+        await t.rollback();
+        console.error("Erreur création projet + segmentation:", e);
+        res.status(500).json({ error: "Erreur lors de la création du projet ou de la segmentation.", details: e.message || e.toString() });
+    }
+});
+
+// GET un projet + ses segments
+router.get("/:id", async (req, res) => {
+    const projet = await Projet.findByPk(req.params.id, { include: { model: Segment } });
+    if (!projet) return res.status(404).json({ error: "Projet non trouvé" });
+    res.json(projet);
+});
+
+// POST segments pour un projet
+router.post("/:id/segments", async (req, res) => {
+    const { segments } = req.body; // tableau [{contenu,...}]
+    const projet = await Projet.findByPk(req.params.id);
+    if (!projet) return res.status(404).json({ error: "Projet non trouvé" });
+    // Supprime les segments existants
+    await Segment.destroy({ where: { projetId: projet.id } });
+    // Ajoute chaque segment
+    const segs = [];
+    for (const s of segments) {
+        segs.push(await Segment.create({ ...s, projetId: projet.id }));
+    }
+    res.json(segs);
+});
+
+// GET segments d’un projet
+router.get("/:id/segments", async (req, res) => {
+    const segs = await Segment.findAll({
+        where: { projetId: req.params.id },
+        order: [["id", "ASC"]],
     });
-
-    // 🔥 Segmentation automatique via IA Python
-    const segments = await segmenterTexte(description) || [];
-
-    // 💾 Enregistrement des segments
-    await Promise.all(
-      segments.map(async (contenu) => {
-        const contexte = await classifierContexte(contenu);
-        return Segment.create({
-          contenuSource: contenu,
-          contexte,
-          statut: 'en_attente', // ✅ cohérent avec ton modèle
-          projetId: projet.id
-        });
-      })
-    );
-
-    // Retourne projet avec ses segments
-    const projetComplet = await Projet.findByPk(projet.id, {
-      include: [{ model: Segment }]
-    });
-
-    res.json({
-      message: "Projet et segments créés avec succès ✅",
-      projet: projetComplet,
-      nombreDeSegments: segments.length
-    });
-  } catch (err) {
-    console.error("Erreur création projet :", err);
-    res.status(400).json({ message: 'Erreur', error: err.message });
-  }
+    res.json(segs);
 });
 
-// 📄 Lister tous les projets
-router.get('/', verifierToken, async (req, res) => {
-  const projets = await Projet.findAll();
-  res.json(projets);
+// PUT segment
+router.put("/:id/segments/:segmentId", async (req, res) => {
+    const seg = await Segment.findByPk(req.params.segmentId);
+    if (!seg) return res.status(404).json({ error: "Segment non trouvé" });
+    await seg.update(req.body);
+    res.json(seg);
 });
 
-// 📄 Lire un projet (avec ses segments)
-router.get('/:id', verifierToken, async (req, res) => {
-  const projet = await Projet.findByPk(req.params.id, {
-    include: [{ model: Segment }]
-  });
-  if (!projet) return res.status(404).json({ message: "Introuvable" });
-  res.json(projet);
-});
-
-// 📄 Lister les segments d’un projet
-router.get('/:id/segments', verifierToken, async (req, res) => {
-  try {
-    const segments = await Segment.findAll({
-      where: { projetId: req.params.id }
-    });
-
-    res.json(segments);
-  } catch (err) {
-    console.error("Erreur récupération segments :", err);
-    res.status(500).json({ message: "Erreur serveur", error: err.message });
-  }
-});
-
-// 📝 Modifier un projet
-router.put('/:id', verifierToken, verifierRole('chef_projet'), async (req, res) => {
-  const projet = await Projet.findByPk(req.params.id);
-  if (!projet) return res.status(404).json({ message: "Introuvable" });
-
-  await projet.update(req.body);
-  res.json(projet);
-});
-
-// ❌ Supprimer un projet
-router.delete('/:id', verifierToken, verifierRole('chef_projet'), async (req, res) => {
-  const projet = await Projet.findByPk(req.params.id);
-  if (!projet) return res.status(404).json({ message: "Introuvable" });
-
-  await projet.destroy();
-  res.json({ message: "Supprimé ✅" });
+// DELETE segment
+router.delete("/:id/segments/:segmentId", async (req, res) => {
+    const seg = await Segment.findByPk(req.params.segmentId);
+    if (!seg) return res.status(404).json({ error: "Segment non trouvé" });
+    await seg.destroy();
+    res.json({ ok: true });
 });
 
 module.exports = router;

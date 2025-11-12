@@ -1,21 +1,33 @@
+// Modèle Projet
 module.exports = (sequelize, DataTypes) => {
   const Projet = sequelize.define('Projet', {
-    titre: { type: DataTypes.STRING, allowNull: false },
-    description: DataTypes.TEXT,
-    statut: {
-      type: DataTypes.ENUM('ouvert', 'en_cours', 'termine'),
-      defaultValue: 'ouvert'
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true
     },
-    dateDebut: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
-    dateFin: DataTypes.DATE
+    nomProjet: {
+      type: DataTypes.STRING,
+      allowNull: false
+    },
+    texte: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    isFinished: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
+    rapport: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    // Liste des segments stockée directement en JSON
+    segments: {
+      type: DataTypes.JSON,
+      defaultValue: []
+    }
   });
-
-  Projet.associate = (models) => {
-    Projet.belongsTo(models.Langue, { as: 'langueSource', foreignKey: 'langueSourceId' });
-    Projet.belongsTo(models.Langue, { as: 'langueCible', foreignKey: 'langueCibleId' });
-    Projet.belongsTo(models.Utilisateur, { as: 'createur', foreignKey: 'createurId' });
-    Projet.hasMany(models.Segment, { foreignKey: 'projetId' });
-  };
 
   return Projet;
 };
