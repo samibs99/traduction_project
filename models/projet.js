@@ -27,7 +27,20 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.JSON,
       defaultValue: []
     }
+    ,
+    traducteurId: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    }
   });
+
+  Projet.associate = (models) => {
+    // assigned traducteur
+    Projet.belongsTo(models.Utilisateur, { foreignKey: 'traducteurId', as: 'Traducteur' });
+    // createur (chef de projet)
+    Projet.belongsTo(models.Utilisateur, { foreignKey: 'createurId', as: 'Createur' });
+    // segments relation is declared on Segment side
+  };
 
   return Projet;
 };

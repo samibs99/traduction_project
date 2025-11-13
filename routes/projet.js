@@ -3,24 +3,27 @@ const router = express.Router();
 
 const axios = require("axios");
 const db = require("../models"); // Assure-toi d’avoir index.js pour centraliser l’export des modèles
-const { Projet, Segment, sequelize } = db;
+const { Projet, Segment, Utilisateur, sequelize } = db;
 
 // GET projets
 router.get("/", async (req, res) => {
-    const projets = await Projet.findAll({ order: [["createdAt", "DESC"]] });
+    const projets = await Projet.findAll({
+        order: [["createdAt", "DESC"]],
+        include: [{ model: Utilisateur, attributes: ['id','nom','email'], as: 'Traducteur' }]
+    });
     res.json(projets);
 });
 
 // POST projet
 // POST création de projet + segmentation automatique
 router.post("/", async (req, res) => {
-    const { nomProjet, texte } = req.body;
+    const { nomProjet, texte, traducteurId } = req.body;
     if (!nomProjet) return res.status(400).json({ error: "Nom du projet requis." });
 
     const t = await sequelize.transaction();
     try {
         // Crée d'abord le projet (pour obtenir un id)
-        const projet = await Projet.create({ nomProjet, texte }, { transaction: t });
+    const projet = await Projet.create({ nomProjet, texte, traducteurId: traducteurId || null }, { transaction: t });
 
         // Si on a du texte, appeler le service de segmentation Python (FastAPI)
         let segmentsArray = [];
@@ -44,6 +47,11 @@ router.post("/", async (req, res) => {
             await projet.update({ segments: segmentsArray }, { transaction: t });
         }
 
+        // si un traducteur a été fourni, on peut mettre à jour à nouveau (déjà passé lors de create)
+        if (traducteurId) {
+            await projet.update({ traducteurId }, { transaction: t });
+        }
+
         await t.commit();
 
         // Recharger les segments insérés pour la réponse
@@ -58,7 +66,7 @@ router.post("/", async (req, res) => {
 
 // GET un projet + ses segments
 router.get("/:id", async (req, res) => {
-    const projet = await Projet.findByPk(req.params.id, { include: { model: Segment } });
+    const projet = await Projet.findByPk(req.params.id, { include: [{ model: Segment }, { model: Utilisateur, as: 'Traducteur', attributes: ['id','nom','email'] }] });
     if (!projet) return res.status(404).json({ error: "Projet non trouvé" });
     res.json(projet);
 });

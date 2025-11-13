@@ -7,6 +7,7 @@ const axios = require("axios");
 // Import des routes API existantes
 const authRoutes = require("./routes/auth");
 const projetRoutes = require("./routes/projet");
+const utilisateurRoutes = require("./routes/utilisateur");
 
 const PY_URL = "http://127.0.0.1:8000"; // Microservice FastAPI
 const app = express();
@@ -22,6 +23,7 @@ app.use(express.json());
 // Routes API existantes
 app.use("/api/auth", authRoutes);
 app.use("/api/projets", projetRoutes);
+app.use("/api/utilisateurs", utilisateurRoutes);
 
 // --------- Helpers HTTP vers Python ---------
 async function callPython(path, payload) {

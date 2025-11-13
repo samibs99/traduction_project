@@ -10,6 +10,8 @@ export default function DashboardChef() {
   const [projets, setProjets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [traducteurs, setTraducteurs] = useState([]);
+  const [selectedTraducteur, setSelectedTraducteur] = useState(null);
 
   const API_BASE = "http://localhost:3000/api";
 
@@ -46,6 +48,30 @@ export default function DashboardChef() {
 
   useEffect(() => { fetchProjets(); }, [token]);
 
+  // charger la liste des traducteurs
+  useEffect(() => {
+    const fetchTraducteurs = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch(`${API_BASE}/utilisateurs?role=traducteur`, { headers: { Authorization: `Bearer ${token}` } });
+        const parsed = await parseResponse(res);
+        if (!parsed.ok) {
+          console.warn('fetchTraducteurs failed', parsed);
+          if (parsed.status === 401 || parsed.status === 403) {
+            setMessage('Session expirée. Veuillez vous reconnecter.');
+            logout();
+            return;
+          }
+          setTraducteurs([]);
+          return;
+        }
+        // parsed.ok
+        setTraducteurs(parsed.data || []);
+      } catch (e) { console.warn('Impossible de charger traducteurs', e); }
+    };
+    fetchTraducteurs();
+  }, [token]);
+
   const creerProjet = async () => {
     if (!nomProjet.trim()) return setMessage("Nom du projet requis.");
     try {
@@ -53,7 +79,7 @@ export default function DashboardChef() {
       const res = await fetch(`${API_BASE}/projets`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ nomProjet, texte })
+        body: JSON.stringify({ nomProjet, texte, traducteurId: selectedTraducteur || null })
       });
       const parsed = await parseResponse(res);
       if (!parsed.ok) {
@@ -123,6 +149,16 @@ export default function DashboardChef() {
                   onChange={e => setTexte(e.target.value)} 
                   rows={5}
                 />
+              </div>
+              
+              <div className="input-group">
+                <label htmlFor="assign">Assigner à</label>
+                <select id="assign" value={selectedTraducteur || ""} onChange={e => setSelectedTraducteur(e.target.value)}>
+                  <option value="">-- Aucun --</option>
+                  {traducteurs.map(t => (
+                    <option key={t.id} value={t.id}>{t.nom} ({t.email})</option>
+                  ))}
+                </select>
               </div>
               
               <div className="form-actions">
