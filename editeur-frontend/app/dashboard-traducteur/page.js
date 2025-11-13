@@ -68,14 +68,21 @@ export default function DashboardTraducteur() {
         return;
       }
       const projet = parsed.data;
+      console.log('Project loaded:', projet);
       setSelectedProjet(projet);
-      setSegments(projet.Segments || []);
-      setSelectedSegmentIdx(0);
+      // Segments can be "Segments" (from association) or "segments" (from JSON column)
+      const segs = projet.Segments || projet.segments || [];
+      console.log('Segments found:', segs);
+      setSegments(segs);
+      setSelectedSegmentIdx(segs.length > 0 ? 0 : null);
       setTranslations({});
       setSuggestions({});
+      if (segs.length === 0) {
+        setMessage("Aucun segment pour ce projet");
+      }
     } catch (e) {
       console.error(e);
-      setMessage("Erreur réseau");
+      setMessage("Erreur réseau: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -93,7 +100,7 @@ export default function DashboardTraducteur() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          texte: currentSegment.text,
+          texte: currentSegment.text || currentSegment.contenu || "",
           langue_source: langues.source,
           langue_cible: langues.cible
         })
@@ -233,14 +240,14 @@ export default function DashboardTraducteur() {
                 <div style={styles.segmentList}>
                   {segments.map((seg, idx) => (
                     <button
-                      key={seg.id}
+                      key={seg.id || idx}
                       onClick={() => setSelectedSegmentIdx(idx)}
                       style={{
                         ...styles.segmentButton,
                         ...(selectedSegmentIdx === idx ? styles.segmentButtonActive : {})
                       }}
                     >
-                      {idx + 1}. {seg.text.substring(0, 40)}...
+                      {idx + 1}. {(seg.text || seg.contenu || "...").substring(0, 40)}...
                     </button>
                   ))}
                 </div>
@@ -255,7 +262,7 @@ export default function DashboardTraducteur() {
                     <div style={styles.column}>
                       <label style={styles.label}>Texte original ({langues.source})</label>
                       <textarea
-                        value={currentSegment.text}
+                        value={currentSegment.text || currentSegment.contenu || ""}
                         readOnly
                         style={styles.textareaReadonly}
                       />
