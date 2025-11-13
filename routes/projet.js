@@ -27,24 +27,32 @@ router.post("/", async (req, res) => {
 
         // Si on a du texte, appeler le service de segmentation Python (FastAPI)
         let segmentsArray = [];
+        let segmentationWarning = null;
         if (texte && texte.trim()) {
-            const PY_URL = process.env.PY_URL || "http://127.0.0.1:8000";
-            const resp = await axios.post(`${PY_URL}/segmenter`, { texte });
-            // le microservice peut renvoyer directement un tableau ou { segments: [...] }
-            segmentsArray = Array.isArray(resp.data) ? resp.data : (resp.data.segments || resp.data.result || []);
+            const PY_URL = process.env.PY_URL || "http://127.0.0.1:8001";
+            try {
+                const resp = await axios.post(`${PY_URL}/segmenter`, { texte }, { timeout: 5000 });
+                // le microservice peut renvoyer directement un tableau ou { segments: [...] }
+                segmentsArray = Array.isArray(resp.data) ? resp.data : (resp.data.segments || resp.data.result || []);
 
-            // Insérer les segments numérotés
-            const toCreate = segmentsArray.map((contenu, idx) => ({
-                projetId: projet.id,
-                text: contenu,
-                classementnum: idx + 1
-            }));
-            if (toCreate.length > 0) {
-                await Segment.bulkCreate(toCreate, { transaction: t });
+                // Insérer les segments numérotés
+                const toCreate = segmentsArray.map((contenu, idx) => ({
+                    projetId: projet.id,
+                    text: contenu,
+                    classementnum: idx + 1
+                }));
+                if (toCreate.length > 0) {
+                    await Segment.bulkCreate(toCreate, { transaction: t });
+                }
+
+                // Stocker aussi le tableau des segments dans la colonne JSON du projet
+                await projet.update({ segments: segmentsArray }, { transaction: t });
+            } catch (segErr) {
+                // Segmentation échouée (service indisponible, timeout, etc.)
+                console.warn("Segmentation échouée, projet créé sans segments:", segErr.message);
+                segmentationWarning = `Segmentation indisponible: ${segErr.message || 'Service inaccessible'}`;
+                // On continue sans segments
             }
-
-            // Stocker aussi le tableau des segments dans la colonne JSON du projet
-            await projet.update({ segments: segmentsArray }, { transaction: t });
         }
 
         // si un traducteur a été fourni, on peut mettre à jour à nouveau (déjà passé lors de create)
@@ -56,11 +64,11 @@ router.post("/", async (req, res) => {
 
         // Recharger les segments insérés pour la réponse
         const insertedSegments = await Segment.findAll({ where: { projetId: projet.id }, order: [["classementnum", "ASC"]] });
-        res.json({ projet, segments: insertedSegments });
+        res.json({ projet, segments: insertedSegments, segmentationWarning });
     } catch (e) {
         await t.rollback();
-        console.error("Erreur création projet + segmentation:", e);
-        res.status(500).json({ error: "Erreur lors de la création du projet ou de la segmentation.", details: e.message || e.toString() });
+        console.error("Erreur création projet:", e);
+        res.status(500).json({ error: "Erreur lors de la création du projet.", details: e.message || e.toString() });
     }
 });
 

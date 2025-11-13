@@ -11,6 +11,16 @@ const utilisateurRoutes = require("./routes/utilisateur");
 
 const PY_URL = "http://127.0.0.1:8000"; // Microservice FastAPI
 const app = express();
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
 app.use(
   cors({
     origin: "http://localhost:3001",
@@ -179,6 +189,13 @@ io.on("connection", (socket) => {
 
 // Lancement
 const PORT = process.env.PORT || 3000;
+server.on('error', (err) => {
+  console.error('Server error:', err);
+  process.exit(1);
+});
 server.listen(PORT, () => {
   console.log(`🚀 API + WebSocket: http://localhost:${PORT}`);
+}).on('error', (err) => {
+  console.error('Listen error:', err);
+  process.exit(1);
 });

@@ -94,7 +94,11 @@ export default function DashboardChef() {
       const created = parsed.data;
       setProjets(prev => [created, ...prev]);
       setNomProjet(""); setTexte("");
-      setMessage("Projet créé avec succès.");
+      if (created.segmentationWarning) {
+        setMessage(`Projet créé. ⚠️ ${created.segmentationWarning}`);
+      } else {
+        setMessage("Projet créé avec succès.");
+      }
     } catch (e) {
       console.error(e);
       setMessage("Erreur réseau lors de la création du projet");
