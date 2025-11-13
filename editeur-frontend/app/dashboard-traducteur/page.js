@@ -147,8 +147,9 @@ export default function DashboardTraducteur() {
         })
       });
       const parsed = await parseResponse(res);
+      console.log('Traduire response:', parsed);
       if (!parsed.ok) {
-        setMessage("Erreur traduction");
+        setMessage("Erreur traduction: " + (parsed.text || parsed.status));
         return;
       }
       const result = parsed.data;
@@ -156,8 +157,8 @@ export default function DashboardTraducteur() {
       setTranslations(prev => ({ ...prev, [currentSegment.id]: translated }));
       setMessage("Traduction complétée ✓");
     } catch (e) {
-      console.error(e);
-      setMessage("Erreur traduction: " + e.message);
+      console.error('Erreur traduction:', e);
+      setMessage("Erreur traduction: " + (e.message || e));
     } finally {
       setLoading(false);
     }
@@ -174,8 +175,9 @@ export default function DashboardTraducteur() {
         body: JSON.stringify({ contenu: currentTranslation || currentSegment.text })
       });
       const parsed = await parseResponse(res);
+      console.log('Suggest response:', parsed);
       if (!parsed.ok) {
-        setMessage("Erreur suggestion");
+        setMessage("Erreur suggestion: " + (parsed.text || parsed.status));
         return;
       }
       const result = parsed.data;
@@ -183,8 +185,8 @@ export default function DashboardTraducteur() {
       setSuggestions(prev => ({ ...prev, [currentSegment.id]: suggestion }));
       setMessage("Suggestion générée ✓");
     } catch (e) {
-      console.error(e);
-      setMessage("Erreur suggestion: " + e.message);
+      console.error('Erreur suggestion:', e);
+      setMessage("Erreur suggestion: " + (e.message || e));
     } finally {
       setLoading(false);
     }
@@ -202,8 +204,9 @@ export default function DashboardTraducteur() {
         body: JSON.stringify({ segments: segsToHarmonize })
       });
       const parsed = await parseResponse(res);
+      console.log('Harmoniser response:', parsed);
       if (!parsed.ok) {
-        setMessage("Erreur harmonisation");
+        setMessage("Erreur harmonisation: " + (parsed.text || parsed.status));
         return;
       }
       const result = parsed.data;
@@ -211,8 +214,8 @@ export default function DashboardTraducteur() {
       setHarmonization(harmonized);
       setMessage("Harmonisation complétée ✓");
     } catch (e) {
-      console.error(e);
-      setMessage("Erreur harmonisation: " + e.message);
+      console.error('Erreur harmonisation:', e);
+      setMessage("Erreur harmonisation: " + (e.message || e));
     } finally {
       setLoading(false);
     }
