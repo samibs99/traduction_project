@@ -119,4 +119,50 @@ router.delete("/:id/segments/:segmentId", async (req, res) => {
     res.json({ ok: true });
 });
 
+// POST resegment: re-segment a project (if segmentation failed initially)
+router.post("/:id/resegment", async (req, res) => {
+    const projet = await Projet.findByPk(req.params.id);
+    if (!projet) return res.status(404).json({ error: "Projet non trouvé" });
+    if (!projet.texte) return res.status(400).json({ error: "Projet n'a pas de texte" });
+
+    const t = await sequelize.transaction();
+    try {
+        // Supprimer les anciens segments
+        await Segment.destroy({ where: { projetId: projet.id }, transaction: t });
+
+        // Segmenter le texte
+        let segmentsArray = [];
+        const PY_URL = process.env.PY_URL || "http://127.0.0.1:8001";
+        try {
+            const resp = await axios.post(`${PY_URL}/segmenter`, { texte: projet.texte }, { timeout: 5000 });
+            segmentsArray = Array.isArray(resp.data) ? resp.data : (resp.data.segments || resp.data.result || []);
+        } catch (segErr) {
+            console.warn("Segmentation échouée lors du resegment:", segErr.message);
+            // Fallback: simple split by sentences
+            segmentsArray = projet.texte.split(/[.!?]+/).filter(s => s.trim());
+        }
+
+        // Créer les segments
+        const toCreate = segmentsArray.map((contenu, idx) => ({
+            projetId: projet.id,
+            text: typeof contenu === 'string' ? contenu.trim() : contenu,
+            classementnum: idx + 1
+        }));
+        
+        if (toCreate.length > 0) {
+            await Segment.bulkCreate(toCreate, { transaction: t });
+        }
+
+        await projet.update({ segments: segmentsArray }, { transaction: t });
+        await t.commit();
+
+        const insertedSegments = await Segment.findAll({ where: { projetId: projet.id }, order: [["classementnum", "ASC"]] });
+        res.json({ projet, segments: insertedSegments, message: `Projet resegmenté: ${insertedSegments.length} segments créés` });
+    } catch (e) {
+        await t.rollback();
+        console.error("Erreur resegment:", e);
+        res.status(500).json({ error: "Erreur resegmentation", details: e.message });
+    }
+});
+
 module.exports = router;

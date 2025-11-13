@@ -196,6 +196,32 @@ export default function DashboardTraducteur() {
     }
   };
 
+  // Resegment a project
+  const resegmentProject = async () => {
+    if (!selectedProjet) return;
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/projets/${selectedProjet.id}/resegment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }
+      });
+      const parsed = await parseResponse(res);
+      if (!parsed.ok) {
+        setMessage("Erreur resegmentation");
+        return;
+      }
+      const result = parsed.data;
+      setSegments(result.segments || []);
+      setSelectedSegmentIdx(result.segments && result.segments.length > 0 ? 0 : null);
+      setMessage(result.message || "Resegmentation complétée ✓");
+    } catch (e) {
+      console.error(e);
+      setMessage("Erreur resegmentation: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <ProtectedRoute allowedRoles={["traducteur"]}>
       <div style={styles.container}>
@@ -335,9 +361,22 @@ export default function DashboardTraducteur() {
 
           {selectedProjet && segments.length === 0 && (
             <section style={styles.section}>
-              <p style={{ textAlign: "center", color: "#718096" }}>
-                Aucun segment pour ce projet
-              </p>
+              <div style={{ textAlign: "center", padding: "30px" }}>
+                <p style={{ color: "#718096", fontSize: "16px", marginBottom: "20px" }}>
+                  ⚠️ Aucun segment pour ce projet
+                </p>
+                <p style={{ color: "#a0aec0", fontSize: "14px", marginBottom: "20px" }}>
+                  Les segments n'ont pas pu être créés lors de la création du projet.<br />
+                  Cliquez sur le bouton ci-dessous pour segmenter le texte du projet.
+                </p>
+                <button 
+                  onClick={resegmentProject} 
+                  disabled={loading}
+                  style={styles.btnPrimary}
+                >
+                  {loading ? "🔄 Segmentation en cours..." : "🔄 Segmenter le projet"}
+                </button>
+              </div>
             </section>
           )}
         </main>
