@@ -9,7 +9,8 @@ const authRoutes = require("./routes/auth");
 const projetRoutes = require("./routes/projet");
 const utilisateurRoutes = require("./routes/utilisateur");
 
-const PY_URL = "http://127.0.0.1:8000"; // Microservice FastAPI
+const PY_URL = process.env.PY_URL || null; // optional configured Microservice FastAPI
+const PY_CANDIDATES = PY_URL ? [PY_URL] : ["http://127.0.0.1:8001", "http://127.0.0.1:8000"]; // try these if no env
 const app = express();
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -37,9 +38,20 @@ app.use("/api/utilisateurs", utilisateurRoutes);
 
 // --------- Helpers HTTP vers Python ---------
 async function callPython(path, payload) {
-  const url = `${PY_URL}${path}`;
-  const { data } = await axios.post(url, payload);
-  return data;
+  let lastErr = null;
+  for (const base of PY_CANDIDATES) {
+    const url = `${base.replace(/\/$/, '')}${path}`;
+    try {
+      const { data } = await axios.post(url, payload, { timeout: 7000 });
+      return data;
+    } catch (e) {
+      lastErr = e;
+      console.warn(`callPython failed for ${url}:`, e.message || e);
+      // try next
+    }
+  }
+  // if all candidates failed, throw error
+  throw lastErr || new Error('No Python endpoints configured');
 }
 
 // --------- Endpoints IA côté Node ---------

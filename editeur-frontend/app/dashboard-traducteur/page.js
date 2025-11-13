@@ -71,8 +71,10 @@ export default function DashboardTraducteur() {
       console.log('Project loaded:', projet);
       setSelectedProjet(projet);
       // Segments can be "Segments" (from association) or "segments" (from JSON column)
-      const segs = projet.Segments || projet.segments || [];
-      console.log('Segments found:', segs);
+      const rawSegs = projet.Segments || projet.segments || [];
+      console.log('Segments found (raw):', rawSegs);
+      const segs = normalizeSegments(rawSegs);
+      console.log('Segments normalized:', segs);
       setSegments(segs);
       setSelectedSegmentIdx(segs.length > 0 ? 0 : null);
       setTranslations({});
@@ -86,6 +88,45 @@ export default function DashboardTraducteur() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Wrapper to set a quick preview immediately when clicking a project
+  const handleProjectClick = (projet) => {
+    try {
+      console.log('Project clicked:', projet.id, projet.nomProjet);
+      // show a quick preview immediately
+      setSelectedProjet(projet);
+      // If the project object already contains segments (from the list), show them immediately
+      const rawSegs = projet.Segments || projet.segments || [];
+      if (rawSegs && rawSegs.length > 0) {
+        const norm = normalizeSegments(rawSegs);
+        setSegments(norm);
+        setSelectedSegmentIdx(norm.length > 0 ? 0 : null);
+      } else {
+        // clear previous segments while loading
+        setSegments([]);
+        setSelectedSegmentIdx(null);
+      }
+      // fetch full project data (will call setSelectedProjet again)
+      selectProjet(projet.id);
+    } catch (e) {
+      console.error('handleProjectClick error', e);
+    }
+  };
+
+  // Normalize segments helper
+  const normalizeSegments = (rawSegs) => {
+    return (rawSegs || []).map((s, idx) => {
+      if (typeof s === 'string') {
+        return { id: `s-${idx + 1}`, text: s, classementnum: idx + 1 };
+      }
+      const src = s && s.dataValues ? s.dataValues : s || {};
+      return {
+        id: src.id || `s-${idx + 1}`,
+        text: src.text || src.contenu || src.texte || '',
+        classementnum: src.classementnum || src.classement || idx + 1
+      };
+    });
   };
 
   const currentSegment = selectedSegmentIdx !== null && segments[selectedSegmentIdx] ? segments[selectedSegmentIdx] : null;
@@ -245,15 +286,32 @@ export default function DashboardTraducteur() {
               {projets.length === 0 ? (
                 <p>Aucun projet assigné</p>
               ) : (
-                <select
-                  value={selectedProjet?.id || ""}
-                  onChange={(e) => selectProjet(Number(e.target.value))}
-                  style={styles.select}
-                >
-                  {projets.map(p => (
-                    <option key={p.id} value={p.id}>{p.nomProjet}</option>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {projets.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleProjectClick(p)}
+                      style={{
+                        ...styles.projectNameButton,
+                        ...(selectedProjet?.id === p.id ? styles.projectNameButtonActive : {}),
+                      }}
+                    >
+                      {p.nomProjet}
+                    </button>
                   ))}
-                </select>
+                </div>
+              )}
+
+              {/* Afficher le contenu du projet sélectionné (texte source) */}
+              {selectedProjet && (
+                <div style={styles.projectContentBox}>
+                  <h3 style={{ margin: "8px 0" }}>Contenu du projet</h3>
+                  <textarea
+                    readOnly
+                    value={selectedProjet.texte || selectedProjet.text || selectedProjet.contenu || ""}
+                    style={{ ...styles.textareaReadonly, width: "100%", minHeight: 120 }}
+                  />
+                </div>
               )}
             </div>
           </section>
@@ -438,10 +496,33 @@ const styles = {
   select: {
     width: "100%",
     padding: "10px 12px",
-    border: "2px solid #e2e8f0",
+    borderWidth: "2px",
+    borderStyle: "solid",
+    borderColor: "#e2e8f0",
     borderRadius: "6px",
     fontSize: "14px",
     cursor: "pointer"
+  },
+  projectNameButton: {
+    padding: "10px 12px",
+    textAlign: "left",
+    borderWidth: "2px",
+    borderStyle: "solid",
+    borderColor: "#e2e8f0",
+    borderRadius: "6px",
+    backgroundColor: "white",
+    cursor: "pointer",
+    fontSize: "14px"
+  },
+  projectNameButtonActive: {
+    borderColor: "#3182ce",
+    backgroundColor: "#ebf8ff",
+    color: "#2c5282",
+    fontWeight: 700
+  },
+  projectContentBox: {
+    marginTop: 12,
+    paddingTop: 12
   },
   segmentList: {
     display: "grid",
@@ -451,7 +532,9 @@ const styles = {
   },
   segmentButton: {
     padding: "12px",
-    border: "2px solid #cbd5e0",
+    borderWidth: "2px",
+    borderStyle: "solid",
+    borderColor: "#cbd5e0",
     borderRadius: "6px",
     backgroundColor: "white",
     cursor: "pointer",
@@ -483,7 +566,9 @@ const styles = {
   },
   textarea: {
     padding: "12px",
-    border: "2px solid #e2e8f0",
+    borderWidth: "2px",
+    borderStyle: "solid",
+    borderColor: "#e2e8f0",
     borderRadius: "6px",
     fontFamily: "monospace",
     fontSize: "13px",
@@ -492,7 +577,9 @@ const styles = {
   },
   textareaReadonly: {
     padding: "12px",
-    border: "2px solid #e2e8f0",
+    borderWidth: "2px",
+    borderStyle: "solid",
+    borderColor: "#e2e8f0",
     borderRadius: "6px",
     fontFamily: "monospace",
     fontSize: "13px",

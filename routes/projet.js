@@ -14,6 +14,27 @@ router.get("/", async (req, res) => {
     res.json(projets);
 });
 
+// Helper: try segmentation on multiple endpoints (configurable)
+async function trySegmenterCall(texte) {
+    const configured = process.env.PY_URL ? [process.env.PY_URL] : [];
+    // fallback candidates
+    const candidates = [...configured, "http://127.0.0.1:8001", "http://127.0.0.1:8000"];
+    let lastErr = null;
+    for (const base of candidates) {
+        try {
+            const resp = await axios.post(`${base.replace(/\/$/, '')}/segmenter`, { texte }, { timeout: 7000 });
+            const segmentsArray = Array.isArray(resp.data) ? resp.data : (resp.data.segments || resp.data.result || []);
+            return { segments: segmentsArray, usedUrl: base };
+        } catch (err) {
+            lastErr = err;
+            console.warn(`Segmenter call failed for ${base}:`, err.message);
+            // try next candidate
+        }
+    }
+    // If all fail, throw the last error
+    throw lastErr;
+}
+
 // POST projet
 // POST création de projet + segmentation automatique
 router.post("/", async (req, res) => {
@@ -29,11 +50,9 @@ router.post("/", async (req, res) => {
         let segmentsArray = [];
         let segmentationWarning = null;
         if (texte && texte.trim()) {
-            const PY_URL = process.env.PY_URL || "http://127.0.0.1:8001";
             try {
-                const resp = await axios.post(`${PY_URL}/segmenter`, { texte }, { timeout: 5000 });
-                // le microservice peut renvoyer directement un tableau ou { segments: [...] }
-                segmentsArray = Array.isArray(resp.data) ? resp.data : (resp.data.segments || resp.data.result || []);
+                const result = await trySegmenterCall(texte);
+                segmentsArray = result.segments || [];
 
                 // Insérer les segments numérotés
                 const toCreate = segmentsArray.map((contenu, idx) => ({
@@ -49,9 +68,25 @@ router.post("/", async (req, res) => {
                 await projet.update({ segments: segmentsArray }, { transaction: t });
             } catch (segErr) {
                 // Segmentation échouée (service indisponible, timeout, etc.)
-                console.warn("Segmentation échouée, projet créé sans segments:", segErr.message);
-                segmentationWarning = `Segmentation indisponible: ${segErr.message || 'Service inaccessible'}`;
-                // On continue sans segments
+                console.warn("Segmentation échouée, tentative de fallback (split naïf):", segErr && segErr.message ? segErr.message : segErr);
+                segmentationWarning = `Segmentation indisponible: ${segErr && segErr.message ? segErr.message : 'Service inaccessible'} (fallback utilisé)`;
+                // Fallback: simple split par phrases et création des segments localement
+                try {
+                    segmentsArray = texte.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 0);
+                    const toCreateFast = segmentsArray.map((contenu, idx) => ({
+                        projetId: projet.id,
+                        text: typeof contenu === 'string' ? contenu : String(contenu),
+                        classementnum: idx + 1
+                    }));
+                    if (toCreateFast.length > 0) {
+                        await Segment.bulkCreate(toCreateFast, { transaction: t });
+                    }
+                    // Mettre à jour la colonne JSON segments
+                    await projet.update({ segments: segmentsArray }, { transaction: t });
+                } catch (fbErr) {
+                    console.error('Erreur lors du fallback de segmentation:', fbErr);
+                    // laisser segmentationWarning défini et continuer (projet créé sans segments)
+                }
             }
         }
 
@@ -132,12 +167,11 @@ router.post("/:id/resegment", async (req, res) => {
 
         // Segmenter le texte
         let segmentsArray = [];
-        const PY_URL = process.env.PY_URL || "http://127.0.0.1:8001";
         try {
-            const resp = await axios.post(`${PY_URL}/segmenter`, { texte: projet.texte }, { timeout: 5000 });
-            segmentsArray = Array.isArray(resp.data) ? resp.data : (resp.data.segments || resp.data.result || []);
+            const result = await trySegmenterCall(projet.texte);
+            segmentsArray = result.segments || [];
         } catch (segErr) {
-            console.warn("Segmentation échouée lors du resegment:", segErr.message);
+            console.warn("Segmentation échouée lors du resegment:", segErr && segErr.message ? segErr.message : segErr);
             // Fallback: simple split by sentences
             segmentsArray = projet.texte.split(/[.!?]+/).filter(s => s.trim());
         }
