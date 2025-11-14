@@ -132,6 +132,20 @@ export default function DashboardTraducteur() {
   const currentSegment = selectedSegmentIdx !== null && segments[selectedSegmentIdx] ? segments[selectedSegmentIdx] : null;
   const currentTranslation = currentSegment ? (translations[currentSegment.id] || "") : "";
 
+  const LANG_OPTIONS = [
+    { code: "FR", label: "Français" },
+    { code: "EN", label: "Anglais" },
+    { code: "ES", label: "Espagnol" },
+    { code: "DE", label: "Allemand" },
+    { code: "IT", label: "Italien" },
+    { code: "PT", label: "Portugais" },
+    { code: "AR", label: "Arabe" }
+  ];
+
+  const changeLang = (which, value) => {
+    setLangues(prev => ({ ...prev, [which]: value }));
+  };
+
   // Appeler Traduire API
   const callTranslate = async () => {
     if (!currentSegment) return;
@@ -149,7 +163,8 @@ export default function DashboardTraducteur() {
       const parsed = await parseResponse(res);
       console.log('Traduire response:', parsed);
       if (!parsed.ok) {
-        setMessage("Erreur traduction: " + (parsed.text || parsed.status));
+        const detail = parsed.data && parsed.data.detail ? parsed.data.detail : (parsed.text || parsed.status);
+        setMessage("Erreur traduction: " + detail);
         return;
       }
       const result = parsed.data;
@@ -177,7 +192,8 @@ export default function DashboardTraducteur() {
       const parsed = await parseResponse(res);
       console.log('Suggest response:', parsed);
       if (!parsed.ok) {
-        setMessage("Erreur suggestion: " + (parsed.text || parsed.status));
+        const detail = parsed.data && parsed.data.detail ? parsed.data.detail : (parsed.text || parsed.status);
+        setMessage("Erreur suggestion: " + detail);
         return;
       }
       const result = parsed.data;
@@ -206,7 +222,8 @@ export default function DashboardTraducteur() {
       const parsed = await parseResponse(res);
       console.log('Harmoniser response:', parsed);
       if (!parsed.ok) {
-        setMessage("Erreur harmonisation: " + (parsed.text || parsed.status));
+        const detail = parsed.data && parsed.data.detail ? parsed.data.detail : (parsed.text || parsed.status);
+        setMessage("Erreur harmonisation: " + detail);
         return;
       }
       const result = parsed.data;
@@ -346,6 +363,33 @@ export default function DashboardTraducteur() {
                   <h3>Segment #{selectedSegmentIdx + 1}</h3>
                   
                   <div style={styles.segmentBox}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center", gridColumn: "1 / -1" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <label style={styles.label}>Langue source</label>
+                        <select
+                          value={langues.source}
+                          onChange={(e) => changeLang('source', e.target.value)}
+                          style={{ ...styles.select, width: 160 }}
+                        >
+                          {LANG_OPTIONS.map(opt => (
+                            <option key={opt.code} value={opt.code}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <label style={styles.label}>Langue cible</label>
+                        <select
+                          value={langues.cible}
+                          onChange={(e) => changeLang('cible', e.target.value)}
+                          style={{ ...styles.select, width: 160 }}
+                        >
+                          {LANG_OPTIONS.map(opt => (
+                            <option key={opt.code} value={opt.code}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                     <div style={styles.column}>
                       <label style={styles.label}>Texte original ({langues.source})</label>
                       <textarea

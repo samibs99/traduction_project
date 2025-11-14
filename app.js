@@ -83,8 +83,9 @@ app.post("/api/ai/harmoniser", async (req, res) => {
     const data = await callPython("/harmoniser", { contenu: segments.join("\n") });
     res.json(data);
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ message: "Erreur /harmoniser" });
+    console.error('Error /api/ai/harmoniser:', e);
+    const errMsg = e?.response?.data?.detail || e?.response?.data || e?.message || String(e);
+    res.status(500).json({ message: "Erreur /harmoniser", detail: errMsg });
   }
 });
 
@@ -94,8 +95,9 @@ app.post("/api/ai/suggest", async (req, res) => {
     const data = await callPython("/suggest", { contenu, consignes });
     res.json(data);
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ message: "Erreur /suggest" });
+    console.error('Error /api/ai/suggest:', e);
+    const errMsg = e?.response?.data?.detail || e?.response?.data || e?.message || String(e);
+    res.status(500).json({ message: "Erreur /suggest", detail: errMsg });
   }
 });
 
@@ -105,8 +107,9 @@ app.post("/api/ai/traduire", async (req, res) => {
     const data = await callPython("/traduire", { texte, langue_cible, langue_source, consignes });
     res.json(data);
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ message: "Erreur /traduire" });
+    console.error('Error /api/ai/traduire:', e);
+    const errMsg = e?.response?.data?.detail || e?.response?.data || e?.message || String(e);
+    res.status(500).json({ message: "Erreur /traduire", detail: errMsg });
   }
 });
 // Évaluation automatique BLEU / COMET
