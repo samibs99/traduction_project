@@ -199,4 +199,42 @@ router.post("/:id/resegment", async (req, res) => {
     }
 });
 
+// PATCH projet: update projet fields (texte, nomProjet, traducteurId)
+router.patch("/:id", async (req, res) => {
+    const { texte, nomProjet, traducteurId } = req.body;
+    const projet = await Projet.findByPk(req.params.id);
+    console.log(`[route] PATCH /api/projets/${req.params.id} called`);
+    if (!projet) return res.status(404).json({ error: "Projet non trouvé" });
+    try {
+        const updates = {};
+        if (texte !== undefined) updates.texte = texte;
+        if (nomProjet !== undefined) updates.nomProjet = nomProjet;
+        if (traducteurId !== undefined) updates.traducteurId = traducteurId;
+        await projet.update(updates);
+        res.json(projet);
+    } catch (e) {
+        console.error('Erreur update projet:', e);
+        res.status(500).json({ error: 'Impossible de mettre à jour le projet', details: e.message });
+    }
+});
+
+// DELETE projet: delete project and its segments
+router.delete("/:id", async (req, res) => {
+    const projet = await Projet.findByPk(req.params.id);
+    console.log(`[route] DELETE /api/projets/${req.params.id} called`);
+    if (!projet) return res.status(404).json({ error: "Projet non trouvé" });
+    const t = await sequelize.transaction();
+    try {
+        // supprimer les segments associés
+        await Segment.destroy({ where: { projetId: projet.id }, transaction: t });
+        await projet.destroy({ transaction: t });
+        await t.commit();
+        res.json({ ok: true });
+    } catch (e) {
+        await t.rollback();
+        console.error('Erreur suppression projet:', e);
+        res.status(500).json({ error: 'Impossible de supprimer le projet', details: e.message });
+    }
+});
+
 module.exports = router;

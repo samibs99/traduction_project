@@ -8,6 +8,9 @@ export default function DashboardChef() {
   const [nomProjet, setNomProjet] = useState("");
   const [texte, setTexte] = useState("");
   const [projets, setProjets] = useState([]);
+  const [selectedProjet, setSelectedProjet] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedText, setEditedText] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [traducteurs, setTraducteurs] = useState([]);
@@ -102,6 +105,68 @@ export default function DashboardChef() {
     } catch (e) {
       console.error(e);
       setMessage("Erreur réseau lors de la création du projet");
+    } finally { setLoading(false); }
+  };
+
+  const startEdit = () => {
+    setIsEditing(true);
+    setEditedText(selectedProjet?.texte || selectedProjet?.description || "");
+  };
+
+  const cancelEdit = () => {
+    setIsEditing(false);
+    setEditedText("");
+  };
+
+  const saveEditedText = async () => {
+    if (!selectedProjet) return;
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/projets/${selectedProjet.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ texte: editedText })
+      });
+      const parsed = await parseResponse(res);
+      if (!parsed.ok) {
+        setMessage(parsed.text || JSON.stringify(parsed.data) || 'Erreur sauvegarde');
+        return;
+      }
+      const updated = parsed.data;
+      // update list and modal
+      setProjets(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+      setSelectedProjet(updated);
+      setIsEditing(false);
+      setMessage('Modification enregistrée.');
+    } catch (e) {
+      console.error(e);
+      setMessage('Erreur réseau lors de l\'enregistrement');
+    } finally { setLoading(false); }
+  };
+
+  const deleteProject = async () => {
+    if (!selectedProjet) return;
+    const ok = confirm('Confirmez-vous la suppression de ce projet ? Cette action est irréversible.');
+    if (!ok) return;
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/projets/${selectedProjet.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const parsed = await parseResponse(res);
+      if (!parsed.ok) {
+        setMessage(parsed.text || JSON.stringify(parsed.data) || 'Erreur suppression');
+        return;
+      }
+      // retirer de la liste
+      setProjets(prev => prev.filter(p => p.id !== selectedProjet.id));
+      setSelectedProjet(null);
+      setIsEditing(false);
+      setMessage('Projet supprimé.');
+    } catch (e) {
+      console.error(e);
+      setMessage('Erreur réseau lors de la suppression');
     } finally { setLoading(false); }
   };
 
@@ -242,7 +307,7 @@ export default function DashboardChef() {
                       </p>
                       <div className="project-footer">
                         <span className="project-date">Créé récemment</span>
-                        <button className="project-action">
+                        <button className="project-action" onClick={() => setSelectedProjet(projet)}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                             <circle cx="12" cy="12" r="3"/>
@@ -257,6 +322,38 @@ export default function DashboardChef() {
             </div>
           </section>
         </main>
+
+        {selectedProjet && (
+          <div className="modal" role="dialog" aria-modal="true">
+            <div className="modal-backdrop" onClick={() => { setSelectedProjet(null); setIsEditing(false); }} />
+            <div className="modal-content">
+              <div className="modal-header">
+                <h3>{selectedProjet.nomProjet || selectedProjet.titre || 'Projet'}</h3>
+                <button className="modal-close" onClick={() => { setSelectedProjet(null); setIsEditing(false); }}>✕</button>
+              </div>
+              <div className="modal-body">
+                <h4>Description</h4>
+                {!isEditing ? (
+                  <>
+                    <p>{selectedProjet.texte || selectedProjet.description || 'Aucune description fournie'}</p>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                      <button className="btn-primary" onClick={startEdit}>Éditer</button>
+                      <button className="btn-secondary" onClick={deleteProject} style={{ background: '#fed7d7', color: '#c53030' }}>Supprimer</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <textarea value={editedText} onChange={e => setEditedText(e.target.value)} rows={8} style={{ width: '100%', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                      <button className="btn-primary" onClick={saveEditedText} disabled={loading}>Enregistrer</button>
+                      <button className="btn-secondary" onClick={cancelEdit} disabled={loading}>Annuler</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <style jsx>{`
@@ -563,6 +660,44 @@ export default function DashboardChef() {
             grid-template-columns: 1fr;
           }
         }
+      `}</style>
+      <style jsx>{`
+        .modal {
+          position: fixed;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+        }
+        .modal-backdrop {
+          position: absolute;
+          inset: 0;
+          background: rgba(0,0,0,0.45);
+        }
+        .modal-content {
+          position: relative;
+          background: white;
+          border-radius: 10px;
+          padding: 20px;
+          width: 90%;
+          max-width: 800px;
+          box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+          z-index: 2;
+        }
+        .modal-header {
+          display:flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .modal-close {
+          background: none;
+          border: none;
+          font-size: 18px;
+          cursor: pointer;
+        }
+        .modal-body p { white-space: pre-wrap; color: #374151; }
       `}</style>
     </ProtectedRoute>
   );

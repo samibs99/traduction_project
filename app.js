@@ -22,19 +22,74 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
+// CORS: allow frontend origins in development
+const devAllowedOrigins = ["http://localhost:3000", "http://localhost:3001"];
 app.use(
   cors({
-    origin: "http://localhost:3001",
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    origin: function (origin, callback) {
+      // allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true);
+      if (process.env.NODE_ENV !== 'production' && devAllowedOrigins.indexOf(origin) !== -1) {
+        return callback(null, true);
+      }
+      // in production, you may want to restrict
+      if (process.env.NODE_ENV === 'production') {
+        // adjust the allowed origin in production as needed
+        return callback(new Error('CORS not allowed'), false);
+      }
+      return callback(null, false);
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
 app.use(express.json());
 
+// Simple request logger for debugging route issues
+app.use((req, res, next) => {
+  try {
+    console.log(`[req] ${req.method} ${req.originalUrl} - Origin: ${req.headers.origin || '-'} - Auth: ${req.headers.authorization ? 'yes' : 'no'}`);
+  } catch (e) {
+    // ignore logging errors
+  }
+  next();
+});
+
 // Routes API existantes
 app.use("/api/auth", authRoutes);
 app.use("/api/projets", projetRoutes);
 app.use("/api/utilisateurs", utilisateurRoutes);
+
+// Debug: list mounted routes (dev only)
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/__debug/routes', (req, res) => {
+    try {
+      const out = [];
+      const stack = app._router && app._router.stack ? app._router.stack : [];
+      stack.forEach((layer) => {
+        if (layer.route && layer.route.path) {
+          out.push({ type: 'route', path: layer.route.path, methods: Object.keys(layer.route.methods) });
+        } else if (layer.name === 'router' && layer.regexp) {
+          // router mounted via app.use; layer.regexp describes the mount path
+          const mount = layer.regexp && layer.regexp.source ? layer.regexp.source : String(layer.regexp);
+          // list child routes
+          const children = [];
+          const childStack = layer.handle && layer.handle.stack ? layer.handle.stack : [];
+          childStack.forEach((ch) => {
+            if (ch.route && ch.route.path) {
+              children.push({ path: ch.route.path, methods: Object.keys(ch.route.methods) });
+            }
+          });
+          out.push({ type: 'router', mount: mount, children });
+        }
+      });
+      res.json({ routes: out });
+    } catch (e) {
+      res.status(500).json({ error: 'Impossible de lister les routes', details: String(e) });
+    }
+  });
+}
 
 // --------- Helpers HTTP vers Python ---------
 async function callPython(path, payload) {
