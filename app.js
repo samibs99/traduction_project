@@ -56,6 +56,18 @@ app.use((req, res, next) => {
   next();
 });
 
+// Dev-only: temporary logger for POST /api/projets/:id/traductions
+// This middleware logs the incoming request then passes control to the real route handlers.
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/projets/:id/traductions', (req, res, next) => {
+    try {
+      console.log('[dev-log] Incoming POST /api/projets/:id/traductions', { params: req.params, body: req.body });
+    } catch (e) { console.warn('dev-log error', e); }
+    // do not short-circuit; allow the real route in routes/projet.js to handle the request
+    next();
+  });
+}
+
 // Routes API existantes
 app.use("/api/auth", authRoutes);
 app.use("/api/projets", projetRoutes);

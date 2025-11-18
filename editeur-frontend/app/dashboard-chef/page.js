@@ -11,10 +11,15 @@ export default function DashboardChef() {
   const [selectedProjet, setSelectedProjet] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState("");
+  const [translationsList, setTranslationsList] = useState([]);
+  const [evalComment, setEvalComment] = useState("");
+  const [evaluationBleu, setEvaluationBleu] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [traducteurs, setTraducteurs] = useState([]);
   const [selectedTraducteur, setSelectedTraducteur] = useState(null);
+  const [filterTraducteur, setFilterTraducteur] = useState("");
+  const [filterFinished, setFilterFinished] = useState("");
 
   const API_BASE = "http://localhost:3000/api";
 
@@ -170,13 +175,97 @@ export default function DashboardChef() {
     } finally { setLoading(false); }
   };
 
+  const finishProject = async () => {
+    if (!selectedProjet) return;
+    const ok = confirm('Marquer ce projet comme terminé ?');
+    if (!ok) return;
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/projets/${selectedProjet.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isFinished: true })
+      });
+      const parsed = await parseResponse(res);
+      if (!parsed.ok) {
+        setMessage(parsed.text || JSON.stringify(parsed.data) || 'Erreur mise à jour');
+        return;
+      }
+      const updated = parsed.data;
+      setProjets(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+      setSelectedProjet(updated);
+      setMessage('Projet marqué comme terminé.');
+    } catch (e) {
+      console.error('finishProject error', e);
+      setMessage('Erreur réseau lors de la mise à jour');
+    } finally { setLoading(false); }
+  };
+
+  // Fetch translations for selected project (chef view)
+  useEffect(() => {
+    const fetchTrads = async () => {
+      if (!selectedProjet) return setTranslationsList([]);
+      try {
+        const res = await fetch(`${API_BASE}/projets/${selectedProjet.id}/traductions`, { headers: { Authorization: `Bearer ${token}` } });
+        const parsed = await parseResponse(res);
+        if (!parsed.ok) {
+          console.warn('fetchTrads failed', parsed);
+          setTranslationsList([]);
+          return;
+        }
+        setTranslationsList(parsed.data || []);
+      } catch (e) {
+        console.error('Erreur fetchTrads', e);
+        setTranslationsList([]);
+      }
+    };
+    // initial fetch + polling while modal is open
+    if (selectedProjet) {
+      fetchTrads();
+      const iv = setInterval(fetchTrads, 5000);
+      return () => clearInterval(iv);
+    }
+  }, [selectedProjet, token]);
+
+  const evaluateTranslation = async (trId, statut) => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/projets/traductions/${trId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ statut, evaluation_bleu: evaluationBleu || null, commentaire: evalComment || null })
+      });
+      const parsed = await parseResponse(res);
+      if (!parsed.ok) {
+        setMessage(parsed.text || JSON.stringify(parsed.data) || 'Erreur évaluation');
+        return;
+      }
+      // update local list
+      const updated = parsed.data;
+      setTranslationsList(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+      setMessage('Évaluation sauvegardée.');
+    } catch (e) {
+      console.error('evaluateTranslation error', e);
+      setMessage('Erreur réseau lors de l\'évaluation');
+    } finally { setLoading(false); }
+  };
+
+  const filteredProjects = (projets || []).filter(p => {
+    if (filterTraducteur) {
+      if (!(p.Traducteur && String(p.Traducteur.id) === String(filterTraducteur))) return false;
+    }
+    if (filterFinished === 'finished' && !p.isFinished) return false;
+    if (filterFinished === 'notFinished' && p.isFinished) return false;
+    return true;
+  });
+
   return (
     <ProtectedRoute allowedRoles={["chef_projet"]}>
       <div className="dashboard-container">
         <header className="dashboard-header">
           <div className="header-content">
             <div className="header-title">
-              <h1>Dashboard Chef de Projet</h1>
+              <h1> Chef de Projet</h1>
               <p>Gestion et création de projets</p>
             </div>
             <button className="logout-btn" onClick={logout}>
@@ -274,7 +363,25 @@ export default function DashboardChef() {
           <section className="projects-section">
             <div className="section-header">
               <h2>Projets existants</h2>
-              <span className="project-count">{projets.length} projet(s)</span>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <span className="project-count">{projets.length} projet(s)</span>
+                  <label style={{ fontSize: 13, color: '#64748b' }}>Filtrer par traducteur:</label>
+                  <select value={filterTraducteur} onChange={e => setFilterTraducteur(e.target.value)} style={{ padding: '6px 10px', borderRadius: 6 }}>
+                    <option value="">-- Tous --</option>
+                    {traducteurs.map(t => (
+                      <option key={t.id} value={t.id}>{t.nom} ({t.email})</option>
+                    ))}
+                  </select>
+                  <label style={{ fontSize: 13, color: '#64748b' }}>Filtrer par statut:</label>
+                  <select value={filterFinished} onChange={e => setFilterFinished(e.target.value)} style={{ padding: '6px 10px', borderRadius: 6 }}>
+                    <option value="">-- Tous --</option>
+                    <option value="finished">Terminés</option>
+                    <option value="notFinished">Non terminés</option>
+                  </select>
+                  {filterTraducteur && (
+                    <button className="btn-secondary" onClick={() => setFilterTraducteur("")}>Effacer</button>
+                  )}
+                </div>
             </div>
             
             <div className="projects-container">
@@ -283,7 +390,7 @@ export default function DashboardChef() {
                   <div className="spinner"></div>
                   <p>Chargement des projets...</p>
                 </div>
-              ) : projets.length === 0 ? (
+              ) : filteredProjects.length === 0 ? (
                 <div className="empty-state">
                   <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                     <path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
@@ -293,10 +400,11 @@ export default function DashboardChef() {
                 </div>
               ) : (
                 <div className="projects-grid">
-                  {projets.map((projet, idx) => (
+                  {filteredProjects.map((projet, idx) => (
                     <div key={projet.id ?? projet.nomProjet ?? `projet-${idx}`} className="project-card">
                       <div className="project-header">
                         <h3 className="project-title">{projet.nomProjet || projet.titre || projet.nom}</h3>
+                        {projet.isFinished && (<span className="project-badge">Terminé</span>)}
                       </div>
                       <p className="project-description">
                         {projet.texte 
@@ -332,24 +440,60 @@ export default function DashboardChef() {
                 <button className="modal-close" onClick={() => { setSelectedProjet(null); setIsEditing(false); }}>✕</button>
               </div>
               <div className="modal-body">
-                <h4>Description</h4>
-                {!isEditing ? (
-                  <>
-                    <p>{selectedProjet.texte || selectedProjet.description || 'Aucune description fournie'}</p>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                      <button className="btn-primary" onClick={startEdit}>Éditer</button>
-                      <button className="btn-secondary" onClick={deleteProject} style={{ background: '#fed7d7', color: '#c53030' }}>Supprimer</button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <textarea value={editedText} onChange={e => setEditedText(e.target.value)} rows={8} style={{ width: '100%', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
-                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                      <button className="btn-primary" onClick={saveEditedText} disabled={loading}>Enregistrer</button>
-                      <button className="btn-secondary" onClick={cancelEdit} disabled={loading}>Annuler</button>
-                    </div>
-                  </>
-                )}
+                <div className="modal-grid">
+                  <div className="modal-left">
+                    <h4>Description</h4>
+                    {!isEditing ? (
+                      <>
+                        <p className="project-description-full">{selectedProjet.texte || selectedProjet.description || 'Aucune description fournie'}</p>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                          <button className="btn-primary" onClick={startEdit}>Éditer</button>
+                          {!selectedProjet?.isFinished ? (
+                            <button className="btn-secondary" onClick={finishProject} style={{ background: '#c6f6d5', color: '#276749' }}>Terminer le projet</button>
+                          ) : (
+                            <span className="project-finished">Projet terminé</span>
+                          )}
+                          <button className="btn-secondary" onClick={deleteProject} style={{ background: '#fed7d7', color: '#c53030' }}>Supprimer</button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <textarea value={editedText} onChange={e => setEditedText(e.target.value)} rows={8} style={{ width: '100%', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                          <button className="btn-primary" onClick={saveEditedText} disabled={loading}>Enregistrer</button>
+                          <button className="btn-secondary" onClick={cancelEdit} disabled={loading}>Annuler</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="modal-right">
+                    <h4>Traductions proposées</h4>
+                    {translationsList.length === 0 ? (
+                      <p style={{ color: '#64748b' }}>Aucune traduction disponible pour le moment.</p>
+                    ) : (
+                      <div className="translations-list">
+                        {translationsList.map(tr => (
+                          <div key={tr.id} className="translation-card">
+                            <div className="translation-main">
+                              <div className="translation-seg">{tr.Segment ? (tr.Segment.text || `Segment ${tr.segmentId}`) : `Segment ${tr.segmentId}`}</div>
+                              <div className="translation-text">{tr.texte_traduit || '(vide)'}</div>
+                              <div className="translation-meta">Par: {tr.Traducteur ? tr.Traducteur.nom : 'Inconnu'} — Statut: {tr.statut}</div>
+                            </div>
+                            <div className="translation-actions">
+                              <input type="number" placeholder="Évaluer (0-100)" value={evaluationBleu || ''} onChange={e => setEvaluationBleu(e.target.value)} />
+                              <textarea placeholder="Commentaire" value={evalComment} onChange={e => setEvalComment(e.target.value)} rows={2} />
+                              <div className="action-buttons">
+                                <button className="btn-primary" onClick={() => evaluateTranslation(tr.id, 'accepted')}>Accepter</button>
+                                <button className="btn-secondary reject-btn" onClick={() => evaluateTranslation(tr.id, 'rejected')}>Rejeter</button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -678,10 +822,10 @@ export default function DashboardChef() {
         .modal-content {
           position: relative;
           background: white;
-          border-radius: 10px;
-          padding: 20px;
-          width: 90%;
-          max-width: 800px;
+          border-radius: 12px;
+          padding: 24px;
+          width: 94%;
+          max-width: 1000px;
           box-shadow: 0 8px 30px rgba(0,0,0,0.2);
           z-index: 2;
         }
@@ -698,6 +842,21 @@ export default function DashboardChef() {
           cursor: pointer;
         }
         .modal-body p { white-space: pre-wrap; color: #374151; }
+        .modal-grid { display: grid; grid-template-columns: 1fr 420px; gap: 20px; }
+        .modal-left { max-height: 60vh; overflow: auto; }
+        .modal-right { max-height: 70vh; overflow: auto; }
+        .project-description-full { color: #334155; line-height: 1.6; }
+        .project-finished { display: inline-flex; align-items: center; padding: 8px 12px; border-radius: 8px; background: #e6fffa; color: #097969; font-weight: 700; }
+        .translations-list { display: flex; flex-direction: column; gap: 12px; }
+        .translation-card { padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; display: flex; gap: 12px; justify-content: space-between; }
+        .translation-main { flex: 1 1 auto; }
+        .translation-seg { font-size: 13px; color: #374151; font-weight: 700; }
+        .translation-text { margin-top: 8px; color: #475569; }
+        .translation-meta { margin-top: 8px; font-size: 12px; color: #64748b; }
+        .translation-actions { width: 220px; display: flex; flex-direction: column; gap: 8px; }
+        .translation-actions input, .translation-actions textarea { padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0; }
+        .action-buttons { display:flex; gap:8px; }
+        .reject-btn { background: #fed7d7; color: #c53030; }
       `}</style>
     </ProtectedRoute>
   );

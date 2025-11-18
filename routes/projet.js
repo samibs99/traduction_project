@@ -4,6 +4,7 @@ const router = express.Router();
 const axios = require("axios");
 const db = require("../models"); // Assure-toi d’avoir index.js pour centraliser l’export des modèles
 const { Projet, Segment, Utilisateur, sequelize } = db;
+const Traduction = db.Traduction;
 
 // GET projets
 router.get("/", async (req, res) => {
@@ -16,23 +17,28 @@ router.get("/", async (req, res) => {
 
 // Helper: try segmentation on multiple endpoints (configurable)
 async function trySegmenterCall(texte) {
-    const configured = process.env.PY_URL ? [process.env.PY_URL] : [];
-    // fallback candidates
-    const candidates = [...configured, "http://127.0.0.1:8001", "http://127.0.0.1:8000"];
+    const candidates = [
+        process.env.SEGMENTER_URL,
+        process.env.SEGMENTER_URL_FALLBACK,
+        "http://127.0.0.1:8001",
+        "http://127.0.0.1:8000"
+    ].filter(Boolean);
     let lastErr = null;
     for (const base of candidates) {
         try {
-            const resp = await axios.post(`${base.replace(/\/$/, '')}/segmenter`, { texte }, { timeout: 7000 });
-            const segmentsArray = Array.isArray(resp.data) ? resp.data : (resp.data.segments || resp.data.result || []);
-            return { segments: segmentsArray, usedUrl: base };
+            const url = `${base.replace(/\/$/, '')}/segmenter`;
+            const resp = await axios.post(url, { texte }, { timeout: 7000 });
+            const data = resp.data;
+            const segmentsArray = Array.isArray(data) ? data : (data.segments || data.result || []);
+            if (Array.isArray(segmentsArray)) {
+                return { segments: segmentsArray, usedUrl: base };
+            }
         } catch (err) {
             lastErr = err;
             console.warn(`Segmenter call failed for ${base}:`, err.message);
-            // try next candidate
         }
     }
-    // If all fail, throw the last error
-    throw lastErr;
+    throw lastErr || new Error('No segmenter endpoint succeeded');
 }
 
 // POST projet
@@ -104,6 +110,11 @@ router.post("/", async (req, res) => {
         await t.rollback();
         console.error("Erreur création projet:", e);
         res.status(500).json({ error: "Erreur lors de la création du projet.", details: e.message || e.toString() });
+    } finally {
+        if (t && t.finished !== 'commit') {
+            console.warn('Transaction was not committed (create projet). Ensuring rollback.');
+            try { await t.rollback(); } catch (rollbackErr) { console.error('Error during transaction rollback:', rollbackErr); }
+        }
     }
 });
 
@@ -210,6 +221,7 @@ router.patch("/:id", async (req, res) => {
         if (texte !== undefined) updates.texte = texte;
         if (nomProjet !== undefined) updates.nomProjet = nomProjet;
         if (traducteurId !== undefined) updates.traducteurId = traducteurId;
+        if (req.body.isFinished !== undefined) updates.isFinished = req.body.isFinished;
         await projet.update(updates);
         res.json(projet);
     } catch (e) {
@@ -234,6 +246,155 @@ router.delete("/:id", async (req, res) => {
         await t.rollback();
         console.error('Erreur suppression projet:', e);
         res.status(500).json({ error: 'Impossible de supprimer le projet', details: e.message });
+    }
+});
+
+// POST bulk traductions for a project
+router.post('/:id/traductions', async (req, res) => {
+    const projet = await Projet.findByPk(req.params.id);
+    if (!projet) return res.status(404).json({ error: 'Projet non trouvé' });
+    const { traductions } = req.body; // array
+    if (!Array.isArray(traductions)) return res.status(400).json({ error: 'Payload invalid: traductions attendu' });
+    const results = [];
+    const skipped = [];
+    try {
+        console.log(`[route] POST /api/projets/${req.params.id}/traductions payload count:`, traductions.length);
+
+        // preload existing segments for quick matching (no outer transaction)
+        const existingSegments = await Segment.findAll({ where: { projetId: projet.id } });
+
+        for (const payload of traductions) {
+            try {
+                // Use a transaction per item so a failure doesn't abort others
+                await sequelize.transaction(async (t) => {
+                    // Resolve or create segment (within item transaction)
+                    let segmentId = payload.segmentId || null;
+
+                    if (!segmentId) {
+                        // try by classementnum from preloaded segments
+                        if (payload.classementnum) {
+                            const found = existingSegments.find(s => Number(s.classementnum) === Number(payload.classementnum));
+                            if (found) segmentId = found.id;
+                        }
+
+                        // try by exact text match
+                        if (!segmentId && payload.texte_source) {
+                            let seg = await Segment.findOne({ where: { projetId: projet.id, text: payload.texte_source }, transaction: t });
+                            if (!seg) {
+                                // try trimmed equality against preloaded segments
+                                const found = existingSegments.find(s => (s.text || '').trim() === (payload.texte_source || '').trim());
+                                if (found) seg = found;
+                            }
+                            if (seg) segmentId = seg.id;
+                        }
+
+                        // create new segment if still not found
+                        if (!segmentId) {
+                            const maxClassement = await Segment.max('classementnum', { where: { projetId: projet.id } });
+                            const useClassement = (Number.isFinite(maxClassement) ? (maxClassement + 1) : 1);
+                            const createdSeg = await Segment.create({
+                                projetId: projet.id,
+                                text: payload.texte_source || `Segment ${useClassement}`,
+                                classementnum: useClassement
+                            }, { transaction: t });
+                            segmentId = createdSeg.id;
+                            // keep existingSegments in sync for subsequent iterations
+                            existingSegments.push(createdSeg);
+                        }
+                    }
+
+                    if (!segmentId || !payload.traducteurId) {
+                        // validation error for this item; throw to rollback this item transaction
+                        throw Object.assign(new Error('Missing required fields: segmentId or traducteurId'), { code: 'VALIDATION', payload });
+                    }
+
+                    // Upsert traduction within item transaction
+                    let existingTr = await Traduction.findOne({ where: { segmentId, traducteurId: payload.traducteurId || null, projetId: projet.id }, transaction: t });
+
+                    if (existingTr) {
+                        await existingTr.update({
+                            texte_source: payload.texte_source !== undefined ? payload.texte_source : existingTr.texte_source,
+                            texte_traduit: payload.texte_traduit !== undefined ? payload.texte_traduit : existingTr.texte_traduit,
+                            statut: payload.statut !== undefined ? payload.statut : existingTr.statut,
+                            source: payload.source !== undefined ? payload.source : existingTr.source
+                        }, { transaction: t });
+                        results.push(existingTr);
+                    } else {
+                        const created = await Traduction.create({
+                            segmentId,
+                            projetId: projet.id,
+                            traducteurId: payload.traducteurId || null,
+                            texte_source: payload.texte_source || null,
+                            texte_traduit: payload.texte_traduit || null,
+                            statut: payload.statut || 'draft',
+                            source: payload.source || 'manual'
+                        }, { transaction: t });
+                        results.push(created);
+                    }
+                }); // end item transaction
+            } catch (itemErr) {
+                // distinguish validation errors we threw vs DB errors
+                if (itemErr && itemErr.code === 'VALIDATION') {
+                    skipped.push({ reason: 'validation-error', payload: itemErr.payload, error: itemErr.message });
+                } else {
+                    console.error('Error processing traduction payload:', payload, itemErr && itemErr.message ? itemErr.message : itemErr);
+                    const errMsg = itemErr && itemErr.message ? itemErr.message : String(itemErr);
+                    skipped.push({ reason: 'processing-error', payload, error: errMsg, details: itemErr && itemErr.errors ? itemErr.errors : undefined });
+                }
+                // continue with next payload
+                continue;
+            }
+        }
+
+        console.log(`[route] POST /api/projets/${req.params.id}/traductions created: ${results.length}, skipped: ${skipped.length}`);
+
+        // Re-fetch created/updated rows with associations
+        const createdIds = results.map(r => r.id).filter(Boolean);
+        let createdRows = [];
+        if (createdIds.length > 0) {
+            createdRows = await Traduction.findAll({
+                where: { id: createdIds },
+                include: [
+                    { model: Utilisateur, as: 'Traducteur', attributes: ['id','nom','email'] },
+                    { model: Segment }
+                ]
+            });
+        }
+        return res.json({ created: createdRows, skipped });
+    } catch (e) {
+        console.error(`[route] POST /api/projets/${req.params.id}/traductions unexpected error:`, e);
+        return res.status(500).json({ error: 'Erreur lors de la création des traductions', details: e && e.message ? e.message : String(e) });
+    }
+});
+
+// GET traductions for a project
+router.get('/:id/traductions', async (req, res) => {
+    const projet = await Projet.findByPk(req.params.id);
+    if (!projet) return res.status(404).json({ error: 'Projet non trouvé' });
+    try {
+        const rows = await Traduction.findAll({ where: { projetId: projet.id }, include: [{ model: Utilisateur, as: 'Traducteur', attributes: ['id','nom','email'] }, { model: Segment }] });
+        res.json(rows);
+    } catch (e) {
+        console.error('Erreur get traductions:', e);
+        res.status(500).json({ error: 'Impossible de récupérer traductions', details: e.message });
+    }
+});
+
+// PATCH single traduction (evaluation by chef)
+router.patch('/traductions/:trId', async (req, res) => {
+    const { statut, score, commentaire } = req.body;
+    const tr = await Traduction.findByPk(req.params.trId);
+    if (!tr) return res.status(404).json({ error: 'Traduction non trouvée' });
+    try {
+        const updates = {};
+        if (statut !== undefined) updates.statut = statut;
+        if (score !== undefined) updates.score = score;
+        if (commentaire !== undefined) updates.commentaire = commentaire;
+        await tr.update(updates);
+        res.json(tr);
+    } catch (e) {
+        console.error('Erreur update traduction:', e);
+        res.status(500).json({ error: 'Impossible de mettre à jour la traduction', details: e.message });
     }
 });
 

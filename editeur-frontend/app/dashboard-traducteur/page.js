@@ -14,6 +14,7 @@ export default function DashboardTraducteur() {
   const [harmonization, setHarmonization] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [lastSaveResult, setLastSaveResult] = useState(null);
   const [langues, setLangues] = useState({ source: "FR", cible: "EN" });
 
   const API_BASE = "http://localhost:3000/api";
@@ -182,12 +183,17 @@ export default function DashboardTraducteur() {
   // Appeler Suggest API
   const callSuggest = async () => {
     if (!currentSegment) return;
+    const currentTranslated = translations[currentSegment.id] || '';
+    if (!currentTranslated || currentTranslated.trim().length === 0) {
+      setMessage('Aucune traduction disponible pour ce segment. Entrez ou générez d\'abord une traduction.');
+      return;
+    }
     try {
       setLoading(true);
       const res = await fetch(`${API_BASE}/ai/suggest`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ contenu: currentTranslation || currentSegment.text })
+        body: JSON.stringify({ contenu: currentTranslated })
       });
       const parsed = await parseResponse(res);
       console.log('Suggest response:', parsed);
@@ -248,13 +254,79 @@ export default function DashboardTraducteur() {
     if (!selectedProjet) return;
     try {
       setLoading(true);
-      // TODO: Implémenter un endpoint PATCH pour sauvegarder les traductions
-      setMessage("Traductions sauvegardées ✓");
+      // Build payload: only include segments that have numeric IDs (persisted)
+      const traductions = segments.map(s => {
+        const maybeId = Number(s.id);
+        const segmentId = Number.isFinite(maybeId) ? Number(maybeId) : null;
+        return {
+          segmentId,
+          classementnum: s.classementnum || null,
+          texte_source: s.text || '',
+          texte_traduit: translations[s.id] || '',
+          traducteurId: user?.id || null,
+          source: 'manual'
+        };
+      });
+
+      const res = await fetch(`${API_BASE}/projets/${selectedProjet.id}/traductions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ traductions })
+      });
+      const parsed = await parseResponse(res);
+      if (!parsed.ok) {
+        setMessage(parsed.text || JSON.stringify(parsed.data) || 'Erreur sauvegarde');
+        return;
+      }
+      // Accept either old format (array) or new { created, skipped }
+      let created = [];
+      let skipped = [];
+      if (Array.isArray(parsed.data)) {
+        created = parsed.data;
+      } else if (parsed.data && Array.isArray(parsed.data.created)) {
+        created = parsed.data.created;
+        skipped = parsed.data.skipped || [];
+      }
+      setMessage(`Traductions sauvegardées ✓ (${created.length})${skipped.length ? `, ignorées: ${skipped.length}` : ''}`);
+      // store full backend response for debugging (created/skipped details)
+      setLastSaveResult(parsed.data || null);
+
+      // Update local translations map so translator UI reflects saved values
+      try {
+        const newMap = { ...translations };
+        for (const tr of created) {
+          // Try to match segment by segmentId if present, otherwise by classementnum or texte_source
+          let matched = null;
+          if (tr.segmentId) {
+            matched = segments.find(s => Number(s.id) === Number(tr.segmentId) || String(s.id) === String(tr.segmentId));
+          }
+          if (!matched && tr.classementnum) {
+            matched = segments.find(s => Number(s.classementnum) === Number(tr.classementnum));
+          }
+          if (!matched && tr.texte_source) {
+            matched = segments.find(s => (s.text || '').trim() === (tr.texte_source || '').trim());
+          }
+          if (matched) {
+            newMap[matched.id] = tr.texte_traduit || newMap[matched.id] || '';
+          }
+        }
+        setTranslations(newMap);
+      } catch (e) {
+        console.warn('Erreur mise à jour état local après sauvegarde', e);
+      }
+
+      // Also fetch server-side traductions for debugging/confirmation (console)
+      try {
+        const check = await fetch(`${API_BASE}/projets/${selectedProjet.id}/traductions`, { headers: { Authorization: `Bearer ${token}` } });
+        const parsedCheck = await parseResponse(check);
+        console.log('Traductions from server after save:', parsedCheck);
+      } catch (e) {
+        console.warn('Impossible de récupérer traductions après sauvegarde', e);
+      }
     } catch (e) {
-      setMessage("Erreur sauvegarde");
-    } finally {
-      setLoading(false);
-    }
+      console.error('Erreur saveAllTranslations:', e);
+      setMessage('Erreur sauvegarde: ' + (e.message || e));
+    } finally { setLoading(false); }
   };
 
   // Resegment a project
@@ -288,36 +360,59 @@ export default function DashboardTraducteur() {
       <div style={styles.container}>
         <header style={styles.header}>
           <div style={styles.headerContent}>
-            <div>
-              <h1>🌐 Dashboard Traducteur</h1>
-              <p>Traduire, améliorer et harmoniser des segments</p>
+            <div style={styles.headerTitle}>
+              <div style={styles.logo}>🌐</div>
+              <div>
+                <h1 style={styles.title}>Dashboard Traducteur</h1>
+                <p style={styles.subtitle}>Traduire, améliorer et harmoniser des segments</p>
+              </div>
             </div>
-            <button onClick={logout} style={styles.logoutBtn}>
-              Déconnexion
-            </button>
+            <div style={styles.headerActions}>
+              <div style={styles.userInfo}>
+                <span style={styles.userName}>{user?.name || user?.email}</span>
+                <span style={styles.userRole}>Traducteur</span>
+              </div>
+              <button onClick={logout} style={styles.logoutBtn}>
+                <span>Déconnexion</span>
+              </button>
+            </div>
           </div>
         </header>
 
         <main style={styles.main}>
           {/* Sélection du projet */}
           <section style={styles.section}>
-            <h2>Projets assignés</h2>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Projets assignés</h2>
+              <div style={styles.badge}>{projets.length} projet(s)</div>
+            </div>
+            
             <div style={styles.projectSelector}>
               {projets.length === 0 ? (
-                <p>Aucun projet assigné</p>
+                <div style={styles.emptyState}>
+                  <div style={styles.emptyIcon}>📂</div>
+                  <p style={styles.emptyText}>Aucun projet assigné</p>
+                </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={styles.projectGrid}>
                   {projets.map((p) => (
-                    <button
+                    <div
                       key={p.id}
                       onClick={() => handleProjectClick(p)}
                       style={{
-                        ...styles.projectNameButton,
-                        ...(selectedProjet?.id === p.id ? styles.projectNameButtonActive : {}),
+                        ...styles.projectCard,
+                        ...(selectedProjet?.id === p.id ? styles.projectCardActive : {}),
                       }}
                     >
-                      {p.nomProjet}
-                    </button>
+                      <div style={styles.projectIcon}>📄</div>
+                      <div style={styles.projectInfo}>
+                        <h3 style={styles.projectName}>{p.nomProjet}</h3>
+                        <p style={styles.projectMeta}>
+                          {p.Segments ? `${p.Segments.length} segments` : 'Chargement...'}
+                        </p>
+                      </div>
+                      <div style={styles.projectArrow}>→</div>
+                    </div>
                   ))}
                 </div>
               )}
@@ -325,12 +420,14 @@ export default function DashboardTraducteur() {
               {/* Afficher le contenu du projet sélectionné (texte source) */}
               {selectedProjet && (
                 <div style={styles.projectContentBox}>
-                  <h3 style={{ margin: "8px 0" }}>Contenu du projet</h3>
-                  <textarea
-                    readOnly
-                    value={selectedProjet.texte || selectedProjet.text || selectedProjet.contenu || ""}
-                    style={{ ...styles.textareaReadonly, width: "100%", minHeight: 120 }}
-                  />
+                  <h3 style={styles.projectContentTitle}>Contenu du projet</h3>
+                  <div style={styles.textareaContainer}>
+                    <textarea
+                      readOnly
+                      value={selectedProjet.texte || selectedProjet.text || selectedProjet.contenu || ""}
+                      style={styles.textareaReadonly}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -340,7 +437,11 @@ export default function DashboardTraducteur() {
             <>
               {/* Sélection de segment */}
               <section style={styles.section}>
-                <h2>Segments à traduire ({segments.length})</h2>
+                <div style={styles.sectionHeader}>
+                  <h2 style={styles.sectionTitle}>Segments à traduire</h2>
+                  <div style={styles.badge}>{segments.length} segment(s)</div>
+                </div>
+                
                 <div style={styles.segmentList}>
                   {segments.map((seg, idx) => (
                     <button
@@ -351,7 +452,13 @@ export default function DashboardTraducteur() {
                         ...(selectedSegmentIdx === idx ? styles.segmentButtonActive : {})
                       }}
                     >
-                      {idx + 1}. {(seg.text || seg.contenu || "...").substring(0, 40)}...
+                      <span style={styles.segmentNumber}>{idx + 1}</span>
+                      <span style={styles.segmentText}>
+                        {(seg.text || seg.contenu || "...").substring(0, 45)}...
+                      </span>
+                      {translations[seg.id] && (
+                        <div style={styles.translatedBadge}>✓</div>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -360,16 +467,23 @@ export default function DashboardTraducteur() {
               {/* Éditeur de traduction */}
               {currentSegment && (
                 <section style={styles.section}>
-                  <h3>Segment #{selectedSegmentIdx + 1}</h3>
+                  <div style={styles.sectionHeader}>
+                    <h3 style={styles.sectionTitle}>
+                      Segment #{selectedSegmentIdx + 1}
+                      {translations[currentSegment.id] && (
+                        <span style={styles.translatedLabel}> - Traduit</span>
+                      )}
+                    </h3>
+                  </div>
                   
                   <div style={styles.segmentBox}>
-                    <div style={{ display: "flex", gap: 12, alignItems: "center", gridColumn: "1 / -1" }}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={styles.langSelector}>
+                      <div style={styles.langGroup}>
                         <label style={styles.label}>Langue source</label>
                         <select
                           value={langues.source}
                           onChange={(e) => changeLang('source', e.target.value)}
-                          style={{ ...styles.select, width: 160 }}
+                          style={styles.select}
                         >
                           {LANG_OPTIONS.map(opt => (
                             <option key={opt.code} value={opt.code}>{opt.label}</option>
@@ -377,12 +491,14 @@ export default function DashboardTraducteur() {
                         </select>
                       </div>
 
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={styles.langArrow}>→</div>
+
+                      <div style={styles.langGroup}>
                         <label style={styles.label}>Langue cible</label>
                         <select
                           value={langues.cible}
                           onChange={(e) => changeLang('cible', e.target.value)}
-                          style={{ ...styles.select, width: 160 }}
+                          style={styles.select}
                         >
                           {LANG_OPTIONS.map(opt => (
                             <option key={opt.code} value={opt.code}>{opt.label}</option>
@@ -390,62 +506,81 @@ export default function DashboardTraducteur() {
                         </select>
                       </div>
                     </div>
-                    <div style={styles.column}>
-                      <label style={styles.label}>Texte original ({langues.source})</label>
-                      <textarea
-                        value={currentSegment.text || currentSegment.contenu || ""}
-                        readOnly
-                        style={styles.textareaReadonly}
-                      />
-                    </div>
-                    
-                    <div style={styles.column}>
-                      <label style={styles.label}>Traduction ({langues.cible})</label>
-                      <textarea
-                        value={currentTranslation}
-                        onChange={(e) => updateTranslation(e.target.value)}
-                        placeholder="Entrez votre traduction..."
-                        style={styles.textarea}
-                        rows={4}
-                      />
+
+                    <div style={styles.translationEditor}>
+                      <div style={styles.column}>
+                        <label style={styles.label}>
+                          Texte original ({langues.source})
+                        </label>
+                        <div style={styles.textareaContainer}>
+                          <textarea
+                            value={currentSegment.text || currentSegment.contenu || ""}
+                            readOnly
+                            style={styles.textareaReadonly}
+                          />
+                        </div>
+                      </div>
+                      
+                      <div style={styles.column}>
+                        <label style={styles.label}>
+                          Traduction ({langues.cible})
+                        </label>
+                        <div style={styles.textareaContainer}>
+                          <textarea
+                            value={currentTranslation}
+                            onChange={(e) => updateTranslation(e.target.value)}
+                            placeholder="Entrez votre traduction..."
+                            style={styles.textarea}
+                            rows={5}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
 
                   {/* Boutons d'action AI */}
                   <div style={styles.actions}>
                     <button onClick={callTranslate} disabled={loading} style={styles.btnPrimary}>
-                      {loading ? "🔄 ..." : "🤖 Traduire"}
+                      <span style={styles.btnIcon}>🤖</span>
+                      <span>Traduire automatiquement</span>
                     </button>
                     <button onClick={callSuggest} disabled={loading} style={styles.btnSecondary}>
-                      {loading ? "🔄 ..." : "💡 Suggestion"}
+                      <span style={styles.btnIcon}>💡</span>
+                      <span>Obtenir une suggestion</span>
                     </button>
                     <button onClick={callHarmonize} disabled={loading} style={styles.btnSecondary}>
-                      {loading ? "🔄 ..." : "✨ Harmoniser tous"}
+                      <span style={styles.btnIcon}>✨</span>
+                      <span>Harmoniser tous les segments</span>
                     </button>
                     <button onClick={saveAllTranslations} disabled={loading} style={styles.btnSuccess}>
-                      {loading ? "🔄 ..." : "💾 Sauvegarder"}
+                      <span style={styles.btnIcon}>💾</span>
+                      <span>Sauvegarder les traductions</span>
                     </button>
                   </div>
 
                   {/* Suggestion */}
                   {suggestions[currentSegment.id] && (
                     <div style={styles.suggestionBox}>
-                      <h4>💡 Suggestion IA:</h4>
-                      <p>{suggestions[currentSegment.id]}</p>
-                      <button
-                        onClick={() => updateTranslation(suggestions[currentSegment.id])}
-                        style={styles.btnSmall}
-                      >
-                        Appliquer
-                      </button>
+                      <div style={styles.suggestionHeader}>
+                        <h4 style={styles.suggestionTitle}>💡 Suggestion de l'IA</h4>
+                        <button
+                          onClick={() => updateTranslation(suggestions[currentSegment.id])}
+                          style={styles.btnSmall}
+                        >
+                          Appliquer
+                        </button>
+                      </div>
+                      <p style={styles.suggestionText}>{suggestions[currentSegment.id]}</p>
                     </div>
                   )}
 
                   {/* Harmonization */}
                   {harmonization && (
                     <div style={styles.harmonyBox}>
-                      <h4>✨ Harmonisation:</h4>
-                      <textarea value={harmonization} readOnly style={styles.textareaReadonly} rows={6} />
+                      <h4 style={styles.harmonyTitle}>✨ Harmonisation globale</h4>
+                      <div style={styles.textareaContainer}>
+                        <textarea value={harmonization} readOnly style={styles.textareaReadonly} rows={6} />
+                      </div>
                     </div>
                   )}
 
@@ -453,10 +588,22 @@ export default function DashboardTraducteur() {
                   {message && (
                     <div style={{
                       ...styles.message,
-                      backgroundColor: message.includes("Erreur") ? "#fed7d7" : "#c6f6d5",
-                      color: message.includes("Erreur") ? "#c53030" : "#276749"
+                      ...(message.includes("Erreur") ? styles.messageError : styles.messageSuccess)
                     }}>
                       {message}
+                    </div>
+                  )}
+                  {/* Debug: show backend created/skipped details after save */}
+                  {lastSaveResult && (
+                    <div style={{ marginTop: 12, padding: 12, border: '1px dashed #cbd5e1', borderRadius: 8, background: '#f8fafc' }}>
+                      <strong>Résultat sauvegarde (debug)</strong>
+                      <div style={{ marginTop: 8, fontSize: 13, color: '#475569' }}>
+                        Créés: {Array.isArray(lastSaveResult.created) ? lastSaveResult.created.length : 0} — Ignorés: {Array.isArray(lastSaveResult.skipped) ? lastSaveResult.skipped.length : 0}
+                      </div>
+                      <details style={{ marginTop: 8 }}>
+                        <summary style={{ cursor: 'pointer' }}>Voir détails JSON</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8, maxHeight: 240, overflow: 'auto', background: '#ffffff', padding: 8, borderRadius: 6 }}>{JSON.stringify(lastSaveResult, null, 2)}</pre>
+                      </details>
                     </div>
                   )}
                 </section>
@@ -466,11 +613,10 @@ export default function DashboardTraducteur() {
 
           {selectedProjet && segments.length === 0 && (
             <section style={styles.section}>
-              <div style={{ textAlign: "center", padding: "30px" }}>
-                <p style={{ color: "#718096", fontSize: "16px", marginBottom: "20px" }}>
-                  ⚠️ Aucun segment pour ce projet
-                </p>
-                <p style={{ color: "#a0aec0", fontSize: "14px", marginBottom: "20px" }}>
+              <div style={styles.emptyState}>
+                <div style={styles.emptyIcon}>⚡</div>
+                <h3 style={styles.emptyTitle}>Aucun segment disponible</h3>
+                <p style={styles.emptyText}>
                   Les segments n'ont pas pu être créés lors de la création du projet.<br />
                   Cliquez sur le bouton ci-dessous pour segmenter le texte du projet.
                 </p>
@@ -486,10 +632,6 @@ export default function DashboardTraducteur() {
           )}
         </main>
       </div>
-
-      <style jsx>{`
-        * { box-sizing: border-box; }
-      `}</style>
     </ProtectedRoute>
   );
 }
@@ -497,109 +639,281 @@ export default function DashboardTraducteur() {
 const styles = {
   container: {
     minHeight: "100vh",
-    backgroundColor: "#f5f7fa",
-    fontFamily: "system-ui, -apple-system, sans-serif"
+    backgroundColor: "#f8fafc",
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+    color: "#334155"
   },
   header: {
     backgroundColor: "white",
-    borderBottom: "2px solid #e2e8f0",
-    padding: "20px",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.05)"
+    borderBottom: "1px solid #e2e8f0",
+    padding: "0",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
   },
   headerContent: {
     maxWidth: "1200px",
     margin: "0 auto",
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center"
+    alignItems: "center",
+    padding: "16px 24px"
+  },
+  headerTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px"
+  },
+  logo: {
+    fontSize: "32px",
+    padding: "8px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    borderRadius: "12px",
+    width: "48px",
+    height: "48px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  title: {
+    fontSize: "24px",
+    fontWeight: "700",
+    color: "#1e293b",
+    margin: "0"
+  },
+  subtitle: {
+    fontSize: "14px",
+    color: "#64748b",
+    margin: "4px 0 0 0"
+  },
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "16px"
+  },
+  userInfo: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: "2px"
+  },
+  userName: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#1e293b"
+  },
+  userRole: {
+    fontSize: "12px",
+    color: "#64748b",
+    backgroundColor: "#f1f5f9",
+    padding: "2px 8px",
+    borderRadius: "12px"
   },
   logoutBtn: {
     padding: "10px 16px",
-    backgroundColor: "#e53e3e",
-    color: "white",
-    border: "none",
-    borderRadius: "6px",
+    backgroundColor: "transparent",
+    color: "#64748b",
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
     cursor: "pointer",
-    fontWeight: "600",
-    transition: "all 0.2s"
+    fontWeight: "500",
+    transition: "all 0.2s ease",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px"
   },
   main: {
     maxWidth: "1200px",
     margin: "0 auto",
-    padding: "24px 20px",
+    padding: "32px 24px",
     display: "flex",
     flexDirection: "column",
     gap: "24px"
   },
   section: {
     backgroundColor: "white",
-    borderRadius: "8px",
-    padding: "20px",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
+    borderRadius: "12px",
+    padding: "24px",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+    border: "1px solid #f1f5f9"
+  },
+  sectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "20px"
+  },
+  sectionTitle: {
+    fontSize: "18px",
+    fontWeight: "600",
+    color: "#1e293b",
+    margin: "0",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px"
+  },
+  badge: {
+    backgroundColor: "#f1f5f9",
+    color: "#475569",
+    padding: "4px 12px",
+    borderRadius: "12px",
+    fontSize: "12px",
+    fontWeight: "500"
   },
   projectSelector: {
-    marginTop: "12px"
+    marginTop: "4px"
   },
-  select: {
-    width: "100%",
-    padding: "10px 12px",
-    borderWidth: "2px",
+  projectGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+    gap: "12px"
+  },
+  projectCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "16px",
+    borderWidth: "1px",
     borderStyle: "solid",
     borderColor: "#e2e8f0",
-    borderRadius: "6px",
-    fontSize: "14px",
-    cursor: "pointer"
-  },
-  projectNameButton: {
-    padding: "10px 12px",
-    textAlign: "left",
-    borderWidth: "2px",
-    borderStyle: "solid",
-    borderColor: "#e2e8f0",
-    borderRadius: "6px",
+    borderRadius: "8px",
     backgroundColor: "white",
     cursor: "pointer",
-    fontSize: "14px"
+    transition: "all 0.2s ease",
+    textAlign: "left",
+    width: "100%"
   },
-  projectNameButtonActive: {
-    borderColor: "#3182ce",
-    backgroundColor: "#ebf8ff",
-    color: "#2c5282",
-    fontWeight: 700
+  projectCardActive: {
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#3b82f6",
+    backgroundColor: "#eff6ff",
+    boxShadow: "0 0 0 1px #3b82f6"
+  },
+  projectIcon: {
+    fontSize: "20px",
+    padding: "8px",
+    backgroundColor: "#f8fafc",
+    borderRadius: "6px"
+  },
+  projectInfo: {
+    flex: "1"
+  },
+  projectName: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#1e293b",
+    margin: "0 0 4px 0"
+  },
+  projectMeta: {
+    fontSize: "12px",
+    color: "#64748b",
+    margin: "0"
+  },
+  projectArrow: {
+    color: "#94a3b8",
+    fontSize: "18px"
   },
   projectContentBox: {
-    marginTop: 12,
-    paddingTop: 12
+    marginTop: "20px",
+    paddingTop: "20px",
+    borderTop: "1px solid #f1f5f9"
+  },
+  projectContentTitle: {
+    fontSize: "16px",
+    fontWeight: "600",
+    color: "#1e293b",
+    margin: "0 0 12px 0"
   },
   segmentList: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-    gap: "12px",
-    marginTop: "12px"
+    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+    gap: "12px"
   },
   segmentButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
     padding: "12px",
-    borderWidth: "2px",
+    borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#cbd5e0",
-    borderRadius: "6px",
+    borderColor: "#e2e8f0",
+    borderRadius: "8px",
     backgroundColor: "white",
     cursor: "pointer",
-    fontSize: "12px",
-    transition: "all 0.2s",
-    textAlign: "left"
+    transition: "all 0.2s ease",
+    textAlign: "left",
+    position: "relative"
   },
   segmentButtonActive: {
-    borderColor: "#4299e1",
-    backgroundColor: "#ebf8ff",
-    color: "#2c5282",
-    fontWeight: "600"
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#3b82f6",
+    backgroundColor: "#eff6ff",
+    boxShadow: "0 0 0 1px #3b82f6"
+  },
+  segmentNumber: {
+    backgroundColor: "#f1f5f9",
+    color: "#475569",
+    width: "24px",
+    height: "24px",
+    borderRadius: "6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "12px",
+    fontWeight: "600",
+    flexShrink: "0"
+  },
+  segmentText: {
+    fontSize: "13px",
+    color: "#475569",
+    flex: "1",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap"
+  },
+  translatedBadge: {
+    backgroundColor: "#10b981",
+    color: "white",
+    width: "16px",
+    height: "16px",
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "10px",
+    fontWeight: "bold",
+    flexShrink: "0"
+  },
+  translatedLabel: {
+    color: "#10b981",
+    fontSize: "14px",
+    fontWeight: "500"
   },
   segmentBox: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "20px"
+  },
+  langSelector: {
+    display: "flex",
+    alignItems: "center",
+    gap: "16px",
+    justifyContent: "center"
+  },
+  langGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px"
+  },
+  langArrow: {
+    color: "#94a3b8",
+    fontSize: "18px",
+    marginTop: "20px"
+  },
+  translationEditor: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: "16px",
-    marginTop: "16px"
+    gap: "20px"
   },
   column: {
     display: "flex",
@@ -608,99 +922,182 @@ const styles = {
   },
   label: {
     fontWeight: "600",
-    color: "#2d3748",
+    color: "#374151",
     fontSize: "14px"
   },
+  textareaContainer: {
+    position: "relative"
+  },
   textarea: {
-    padding: "12px",
-    borderWidth: "2px",
-    borderStyle: "solid",
-    borderColor: "#e2e8f0",
-    borderRadius: "6px",
-    fontFamily: "monospace",
-    fontSize: "13px",
+    padding: "16px",
+    border: "1px solid #d1d5db",
+    borderRadius: "8px",
+    fontFamily: "inherit",
+    fontSize: "14px",
     lineHeight: "1.5",
-    resize: "none"
+    resize: "none",
+    width: "100%",
+    transition: "border-color 0.2s ease",
+    backgroundColor: "white"
   },
   textareaReadonly: {
-    padding: "12px",
-    borderWidth: "2px",
-    borderStyle: "solid",
-    borderColor: "#e2e8f0",
-    borderRadius: "6px",
-    fontFamily: "monospace",
-    fontSize: "13px",
+    padding: "16px",
+    border: "1px solid #e5e7eb",
+    borderRadius: "8px",
+    fontFamily: "inherit",
+    fontSize: "14px",
     lineHeight: "1.5",
-    backgroundColor: "#f7fafc",
-    resize: "none"
+    backgroundColor: "#f9fafb",
+    resize: "none",
+    width: "100%",
+    color: "#6b7280"
+  },
+  select: {
+    padding: "10px 12px",
+    border: "1px solid #d1d5db",
+    borderRadius: "8px",
+    fontSize: "14px",
+    cursor: "pointer",
+    backgroundColor: "white",
+    minWidth: "140px"
   },
   actions: {
     display: "flex",
     gap: "12px",
-    marginTop: "16px",
+    marginTop: "20px",
     flexWrap: "wrap"
   },
   btnPrimary: {
-    padding: "10px 16px",
-    backgroundColor: "#4299e1",
+    padding: "12px 20px",
+    backgroundColor: "#3b82f6",
     color: "white",
     border: "none",
-    borderRadius: "6px",
+    borderRadius: "8px",
     cursor: "pointer",
-    fontWeight: "600",
-    transition: "all 0.2s"
+    fontWeight: "500",
+    transition: "all 0.2s ease",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "14px"
   },
   btnSecondary: {
-    padding: "10px 16px",
-    backgroundColor: "#edf2f7",
-    color: "#4a5568",
-    border: "none",
-    borderRadius: "6px",
+    padding: "12px 20px",
+    backgroundColor: "white",
+    color: "#374151",
+    border: "1px solid #d1d5db",
+    borderRadius: "8px",
     cursor: "pointer",
-    fontWeight: "600",
-    transition: "all 0.2s"
+    fontWeight: "500",
+    transition: "all 0.2s ease",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "14px"
   },
   btnSuccess: {
-    padding: "10px 16px",
-    backgroundColor: "#48bb78",
+    padding: "12px 20px",
+    backgroundColor: "#10b981",
     color: "white",
     border: "none",
-    borderRadius: "6px",
+    borderRadius: "8px",
     cursor: "pointer",
-    fontWeight: "600",
-    transition: "all 0.2s"
+    fontWeight: "500",
+    transition: "all 0.2s ease",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "14px"
+  },
+  btnIcon: {
+    fontSize: "16px"
   },
   btnSmall: {
-    padding: "8px 12px",
-    backgroundColor: "#4299e1",
+    padding: "6px 12px",
+    backgroundColor: "#3b82f6",
     color: "white",
     border: "none",
-    borderRadius: "4px",
+    borderRadius: "6px",
     cursor: "pointer",
     fontSize: "12px",
-    marginTop: "8px"
+    fontWeight: "500"
   },
   suggestionBox: {
-    marginTop: "16px",
-    padding: "12px",
-    backgroundColor: "#fffaf0",
-    border: "1px solid #fed7d7",
-    borderRadius: "6px",
-    borderLeft: "4px solid #f6ad55"
+    marginTop: "20px",
+    padding: "16px",
+    backgroundColor: "#fffbeb",
+    border: "1px solid #fcd34d",
+    borderRadius: "8px",
+    borderLeft: "4px solid #f59e0b"
+  },
+  suggestionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "8px"
+  },
+  suggestionTitle: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#92400e",
+    margin: "0"
+  },
+  suggestionText: {
+    fontSize: "14px",
+    color: "#92400e",
+    margin: "0",
+    lineHeight: "1.5"
   },
   harmonyBox: {
-    marginTop: "16px",
-    padding: "12px",
-    backgroundColor: "#f0fff4",
-    border: "1px solid #c6f6d5",
-    borderRadius: "6px",
-    borderLeft: "4px solid #68d391"
+    marginTop: "20px",
+    padding: "16px",
+    backgroundColor: "#f0fdf4",
+    border: "1px solid #86efac",
+    borderRadius: "8px",
+    borderLeft: "4px solid #22c55e"
+  },
+  harmonyTitle: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#166534",
+    margin: "0 0 8px 0"
   },
   message: {
     marginTop: "16px",
     padding: "12px 16px",
-    borderRadius: "6px",
+    borderRadius: "8px",
+    fontWeight: "500",
+    fontSize: "14px"
+  },
+  messageSuccess: {
+    backgroundColor: "#f0fdf4",
+    color: "#166534",
+    border: "1px solid #bbf7d0"
+  },
+  messageError: {
+    backgroundColor: "#fef2f2",
+    color: "#dc2626",
+    border: "1px solid #fecaca"
+  },
+  emptyState: {
+    textAlign: "center",
+    padding: "40px 20px"
+  },
+  emptyIcon: {
+    fontSize: "48px",
+    marginBottom: "16px",
+    opacity: "0.5"
+  },
+  emptyTitle: {
+    fontSize: "18px",
     fontWeight: "600",
-    fontSize: "13px"
+    color: "#374151",
+    margin: "0 0 12px 0"
+  },
+  emptyText: {
+    fontSize: "14px",
+    color: "#6b7280",
+    margin: "0 0 24px 0",
+    lineHeight: "1.5"
   }
 };

@@ -39,7 +39,9 @@ module.exports = (sequelize, DataTypes) => {
     Projet.belongsTo(models.Utilisateur, { foreignKey: 'traducteurId', as: 'Traducteur' });
     // createur (chef de projet)
     Projet.belongsTo(models.Utilisateur, { foreignKey: 'createurId', as: 'Createur' });
-    // segments relation is declared on Segment side
+    // relations
+    Projet.hasMany(models.Segment, { foreignKey: 'projetId' });
+    Projet.hasMany(models.Traduction, { foreignKey: 'projetId' });
   };
 
   return Projet;
