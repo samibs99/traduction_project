@@ -382,13 +382,15 @@ router.get('/:id/traductions', async (req, res) => {
 
 // PATCH single traduction (evaluation by chef)
 router.patch('/traductions/:trId', async (req, res) => {
-    const { statut, score, commentaire } = req.body;
+    const { statut, evaluation_bleu, score, commentaire } = req.body;
     const tr = await Traduction.findByPk(req.params.trId);
     if (!tr) return res.status(404).json({ error: 'Traduction non trouvée' });
     try {
         const updates = {};
         if (statut !== undefined) updates.statut = statut;
-        if (score !== undefined) updates.score = score;
+        // Backward-compat: map `score` to `evaluation_bleu` if provided
+        if (evaluation_bleu !== undefined) updates.evaluation_bleu = evaluation_bleu;
+        else if (score !== undefined) updates.evaluation_bleu = score;
         if (commentaire !== undefined) updates.commentaire = commentaire;
         await tr.update(updates);
         res.json(tr);

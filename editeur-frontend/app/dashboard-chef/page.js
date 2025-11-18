@@ -12,8 +12,6 @@ export default function DashboardChef() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState("");
   const [translationsList, setTranslationsList] = useState([]);
-  const [evalComment, setEvalComment] = useState("");
-  const [evaluationBleu, setEvaluationBleu] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [traducteurs, setTraducteurs] = useState([]);
@@ -22,6 +20,12 @@ export default function DashboardChef() {
   const [filterFinished, setFilterFinished] = useState("");
 
   const API_BASE = "http://localhost:3000/api";
+
+  const getCometFromComment = (comment) => {
+    if (!comment) return null;
+    const m = String(comment).match(/COMET\s*=\s*([0-9.]+)/i);
+    return m ? parseFloat(m[1]) : null;
+  };
 
   const parseResponse = async (res) => {
     const ct = res.headers.get("content-type") || "";
@@ -230,17 +234,39 @@ export default function DashboardChef() {
   const evaluateTranslation = async (trId, statut) => {
     try {
       setLoading(true);
+      // Find the traduction to evaluate to build reference/hypothesis
+      const tr = (translationsList || []).find(t => t.id === trId);
+      let evalPayload = {};
+      if (tr && tr.Segment && tr.Segment.text && tr.texte_traduit) {
+        try {
+          const evalRes = await fetch(`${API_BASE}/ai/evaluer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reference: tr.Segment.text, hypothesis: tr.texte_traduit })
+          });
+          const evalParsed = await parseResponse(evalRes);
+          if (evalParsed.ok && evalParsed.data) {
+            const bleu = evalParsed.data?.bleu?.score ?? null;
+            const comet = evalParsed.data?.comet?.score ?? null;
+            evalPayload.evaluation_bleu = bleu;
+            // store COMET score in commentaire for now
+            evalPayload.commentaire = `COMET=${comet !== null ? comet : 'n/a'}`;
+          }
+        } catch (aiErr) {
+          console.warn('AI evaluation failed, proceeding without auto scores:', aiErr);
+        }
+      }
+
       const res = await fetch(`${API_BASE}/projets/traductions/${trId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ statut, evaluation_bleu: evaluationBleu || null, commentaire: evalComment || null })
+        body: JSON.stringify({ statut, ...evalPayload })
       });
       const parsed = await parseResponse(res);
       if (!parsed.ok) {
         setMessage(parsed.text || JSON.stringify(parsed.data) || 'Erreur évaluation');
         return;
       }
-      // update local list
       const updated = parsed.data;
       setTranslationsList(prev => prev.map(t => (t.id === updated.id ? updated : t)));
       setMessage('Évaluation sauvegardée.');
@@ -481,8 +507,12 @@ export default function DashboardChef() {
                               <div className="translation-meta">Par: {tr.Traducteur ? tr.Traducteur.nom : 'Inconnu'} — Statut: {tr.statut}</div>
                             </div>
                             <div className="translation-actions">
-                              <input type="number" placeholder="Évaluer (0-100)" value={evaluationBleu || ''} onChange={e => setEvaluationBleu(e.target.value)} />
-                              <textarea placeholder="Commentaire" value={evalComment} onChange={e => setEvalComment(e.target.value)} rows={2} />
+                              <div className="evaluation-box" style={{ background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:8, padding:10, marginBottom:8 }}>
+                                <div style={{ display:'flex', gap:20, color:'#475569', fontSize:14 }}>
+                                  <div><strong>BLEU:</strong> {tr.evaluation_bleu !== null && tr.evaluation_bleu !== undefined ? Number(tr.evaluation_bleu).toFixed(4) : '—'}</div>
+                                  <div><strong>COMET:</strong> {(() => { const c = getCometFromComment(tr.commentaire); return c !== null ? c.toFixed(4) : '—'; })()}</div>
+                                </div>
+                              </div>
                               <div className="action-buttons">
                                 <button className="btn-primary" onClick={() => evaluateTranslation(tr.id, 'accepted')}>Accepter</button>
                                 <button className="btn-secondary reject-btn" onClick={() => evaluateTranslation(tr.id, 'rejected')}>Rejeter</button>

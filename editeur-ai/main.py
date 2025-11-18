@@ -7,9 +7,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import sacrebleu
-from comet_ml import Experiment
+from comet_ml import Experiment  # optional, not used directly here
 import nltk
-nltk.download('punkt')
+try:
+    nltk.download('punkt', quiet=True)
+except Exception:
+    pass
 
 
 load_dotenv()
@@ -122,15 +125,21 @@ def evaluer(data: dict):
     if not reference or not hypothesis:
         raise HTTPException(status_code=400, detail="Reference et hypothesis sont requis")
 
-    # Exemple simple avec BLEU (nltk)
-    import nltk
-    from nltk.translate.bleu_score import sentence_bleu
-
-    reference_tokens = [reference.split()]
-    hypothesis_tokens = hypothesis.split()
-    bleu_score = sentence_bleu(reference_tokens, hypothesis_tokens)
-
-    # COMET : si tu n'as pas de modèle COMET installé, mets un score factice
-    comet_score = 0.9
-
-    return {"bleu": {"score": bleu_score}, "comet": {"score": comet_score}}
+    # Use sacrebleu for robust BLEU with smoothing/effective order
+    try:
+        from sacrebleu.metrics import BLEU, CHRF
+        bleu_metric = BLEU(effective_order=True)
+        bleu = bleu_metric.sentence_score(hypothesis, [reference]).score / 100.0  # normalize 0..1
+        # Use chrF as a lightweight proxy for adequacy/fluency (0..1)
+        chrf_metric = CHRF()
+        comet_proxy = chrf_metric.sentence_score(hypothesis, [reference]).score / 100.0
+        return {"bleu": {"score": bleu}, "comet": {"score": comet_proxy}}
+    except Exception as e:
+        # Fallback: simple token overlap ratio if sacrebleu unavailable
+        ref_tokens = reference.split()
+        hyp_tokens = hypothesis.split()
+        if not ref_tokens or not hyp_tokens:
+            return {"bleu": {"score": 0.0}, "comet": {"score": 0.0}}
+        overlap = sum(1 for t in hyp_tokens if t in ref_tokens)
+        bleu_simple = overlap / max(1, len(hyp_tokens))
+        return {"bleu": {"score": float(bleu_simple)}, "comet": {"score": float(bleu_simple)}}
